@@ -237,22 +237,25 @@ class ExperimentRunner:
             agent_base_x = (i * 20) % self.config['environment']['map_size'][0]
             agent_base_y = (i * 15) % self.config['environment']['map_size'][1]
             
-            # 주변 여러 위치에 페로몬 분비
-            for dx in range(-2, 3):
+            # 메모리 효율성을 고려한 페로몬 분비 범위 최적화
+            for dx in range(-2, 3):  # 7x7 -> 5x5 격자로 메모리 절약 및 안정성 향상
                 for dy in range(-2, 3):
                     pos_x = max(0, min(self.config['environment']['map_size'][0]-1, agent_base_x + dx))
                     pos_y = max(0, min(self.config['environment']['map_size'][1]-1, agent_base_y + dy))
                     position = (pos_x, pos_y)
                     
                     # 중심에서 멀어질수록 약화된 페로몬 분비
-                    distance_weight = max(0.3, 1.0 - (abs(dx) + abs(dy)) * 0.2)
+                    # 안정적인 거리 가중치 설정
+                    manhattan_distance = abs(dx) + abs(dy)
+                    distance_weight = max(0.4, 1.0 - manhattan_distance * 0.12)  # 적절한 감쇠
                     
-                    # 강화된 페로몬 생성
+                    # 페로몬 생성량 대폭 증가
                     enhanced_pheromone = PheromoneVector(
-                        behavior=pheromone.behavior * distance_weight * 2.0,  # 강화
-                        emotion=pheromone.emotion * distance_weight * 2.0,
-                        social=pheromone.social * distance_weight * 2.0,
-                        context=pheromone.context * distance_weight * 2.0,
+                        # 수치 안정성을 고려한 적정 증폭 (overflow 방지)
+                        behavior=np.clip(pheromone.behavior * distance_weight * 4.0, 0, 10.0),
+                        emotion=np.clip(pheromone.emotion * distance_weight * 4.0, 0, 10.0),
+                        social=np.clip(pheromone.social * distance_weight * 4.0, 0, 10.0),
+                        context=np.clip(pheromone.context * distance_weight * 4.0, 0, 10.0),
                         timestamp=pheromone.timestamp,
                         agent_id=pheromone.agent_id
                     )
@@ -260,12 +263,21 @@ class ExperimentRunner:
             
         # Phase 4: Apply diffusion and decay more gradually
         # 확산은 매 타임스텝이 아닌 주기적으로 적용
-        if t % 3 == 0:  # 3 타임스텝마다 확산 적용
-            self.pheromone_field.diffuse(radius=3)
+        # 메모리 사용량 모니터링 및 적응적 확산
+        import psutil
+        memory_usage = psutil.virtual_memory().percent
+        
+        if memory_usage < 80.0:  # 메모리 여유가 있을 때만 확산
+            if t % 2 == 0:  # 2 타임스텝마다 확산 (메모리 절약)
+                self.pheromone_field.diffuse(radius=4)  # 적절한 반경 (5->4)
+        else:
+            logger.warning(f"메모리 사용량 높음 ({memory_usage:.1f}%), 확산 건너뛰기")
             
-        # 시계열 감쇠 모델은 더 느리게 적용 (메모리 최적화)
+        # 시계열 감쇠 모델 주기를 크게 완화 (페로몬 지속성 향상)
         field_tensor = self.create_field_tensor()
-        if field_tensor.nelement() > 0 and t % 5 == 0:  # 5 타임스텝마다 적용
+        # 메모리 상황에 따른 적응적 시계열 감쇠 주기
+        decay_interval = 12 if memory_usage < 70.0 else 20  # 메모리 상황에 따른 주기 조정
+        if field_tensor.nelement() > 0 and t % decay_interval == 0:
             try:
                 with torch.no_grad(), torch.cuda.amp.autocast(enabled=self.device.type == 'cuda'):  # Mixed precision
                     # Reshape for diffusion model
@@ -292,11 +304,11 @@ class ExperimentRunner:
                 else:
                     raise e
             
-        # 기본 감쇠는 매번 적용하지만 더 약하게
-        if t % 2 == 0:  # 2 타임스텝마다 적용
+        # 기본 감쇠 주기를 완화하여 페로몬 지속성 향상
+        if t % 5 == 0:  # 5 타임스텝마다 적용 (2 -> 5로 완화)
             lifecycle_config = self.config['pheromone'].get('lifecycle', {})
             min_magnitude = lifecycle_config.get('min_magnitude_threshold', 0.01)
-            max_lifetime = lifecycle_config.get('max_lifetime_seconds', 20.0)
+            max_lifetime = lifecycle_config.get('max_lifetime_seconds', 30.0)
             
             self.pheromone_field.decay_all(
                 min_magnitude_threshold=min_magnitude,
@@ -364,7 +376,7 @@ class ExperimentRunner:
         new_field = {}
         for x in range(H):
             for y in range(W):
-                if np.any(tensor[:, x, y] > 1e-3): # 임계값을 높여서 의미있는 페로몬만 유지
+                if np.any(tensor[:, x, y] > 1e-4): # 임계값 완화 (1e-3 -> 1e-4)
                     vector = tensor[:, x, y]
                     
                     # Deconstruct vector based on config
@@ -540,26 +552,22 @@ class ExperimentRunner:
                     
                     # 에이전트 상태 시각화
                     try:
-                        agent_state_futures = [agent.state for agent in self.agents]
-                        # Ray에서 실제 상태를 가져오는 것은 복잡하므로 mock 데이터 생성
-                        agent_states = []
-                        for i in range(len(self.agents)):
-                            # 실제 구현에서는 ray.get()을 사용하여 실제 상태를 가져옴
-                            mock_state = {
-                                'position': np.random.rand(2) * np.array(self.config['environment']['map_size']),
-                                'resources': np.random.uniform(20, 150),
-                                'health': np.random.uniform(50, 100),
-                                'emotion_state': np.random.rand(5) * 0.8 + 0.1,
-                                'social_connections': {}
-                            }
-                            agent_states.append(mock_state)
+                        # 에이전트로부터 실제 상태를 비동기적으로 가져옵니다.
+                        agent_state_futures = [agent.get_state.remote() for agent in self.agents]
+                        agent_states = ray.get(agent_state_futures)
                         
-                        self.visualizer.plot_agent_states(agent_states, t, save=True)
-                        
-                        # 사회적 네트워크 시각화
-                        agent_positions = np.array([state['position'] for state in agent_states])
-                        social_connections = {i: state['social_connections'] for i, state in enumerate(agent_states)}
-                        self.visualizer.plot_social_network(social_connections, agent_positions, t, save=True)
+                        # 에이전트 상태 데이터가 비어있지 않은지 확인
+                        if agent_states:
+                            self.visualizer.plot_agent_states(agent_states, t, save=True)
+                            
+                            # 사회적 네트워크 시각화
+                            # 위치 데이터를 numpy 배열로 변환
+                            agent_positions = np.array([state['position'] for state in agent_states])
+                            social_connections = {i: state['social_connections'] for i, state in enumerate(agent_states)}
+                            
+                            # 사회적 연결이 있는 경우에만 시각화
+                            if any(social_connections.values()):
+                                self.visualizer.plot_social_network(social_connections, agent_positions, t, save=True)
                         
                     except Exception as e:
                         logger.warning(f"에이전트 상태 시각화 실패: {e}")

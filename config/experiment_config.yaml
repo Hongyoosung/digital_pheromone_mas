@@ -7,21 +7,21 @@ experiment:
 
 # 시뮬레이션 환경 설정
 environment:
-  map_size: [100, 100] # H, W
-  num_agents: 10
+  map_size: [50, 50] # H, W - 맵 크기 축소로 밀도 증가
+  num_agents: 10  # 에이전트 수 조정을 통해 리소스 사용량 감소
   max_timesteps: 1000
 
 # 페로몬 관련 설정
 pheromone:
-  decay_rate: 0.95 # 확산 모델의 감쇠 인자 (TemporalDiffusionModel)
+  decay_rate: 0.995 # 확산 모델의 감쇠 인자 더욱 완화 (0.98 -> 0.995)
   dimensions:
     behavior: 4
     emotion: 5
     social: 10
     context: 5
   lifecycle: # 페로몬 수명 관리 설정
-    min_magnitude_threshold: 0.05 # 이 값 이하의 페로몬은 제거
-    max_lifetime_seconds: 15.0    # 이 시간(초) 이상된 페로몬은 제거
+    min_magnitude_threshold: 0.01 # 임계값 완화 (0.05 -> 0.01)
+    max_lifetime_seconds: 120.0    # 수명 대폭 연장 (30 -> 120초)
   
 # 어텐션 네트워크 관련 설정
 attention:
@@ -31,7 +31,7 @@ attention:
   
 # 학습 및 시뮬레이션 하이퍼파라미터
 hyperparameters:
-  communication_period: [5] # N 타임스텝마다 통신 실행
+  communication_period: [10] # N 타임스텝마다 통신 실행 - 매 스텝 통신
   learning_rate: [0.001, 0.0001]
   batch_size: [32]
   train_networks: true  # 네트워크 학습 활성화

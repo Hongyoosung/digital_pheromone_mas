@@ -62,48 +62,57 @@ class PheromoneNetworkTrainer:
         
         logger.info("페로몬 네트워크 트레이너 초기화 완료")
         
-    def train_step(self, agent_embeddings: torch.Tensor, pheromone_field: torch.Tensor, 
+    def train_step(self, agent_embeddings: torch.Tensor, pheromone_field: torch.Tensor,
                    timestep: int, rewards: torch.Tensor) -> Dict[str, float]:
         """단일 학습 스텝 실행"""
         self.attention_router.train()
         self.diffusion_model.train()
-        
+
+        # 그래디언트 초기화
+        self.attention_optimizer.zero_grad()
+        self.diffusion_optimizer.zero_grad()
+
         losses = {}
-        
-        # 1. 어텐션 라우터 학습
-        attention_loss = self._train_attention_router(agent_embeddings, rewards, timestep)
+
+        # 1. 어텐션 라우터 손실 계산
+        attention_loss = self._calculate_attention_loss(agent_embeddings, rewards, timestep)
         losses['attention_loss'] = attention_loss.item()
-        
-        # 2. 확산 모델 학습
-        diffusion_loss = self._train_diffusion_model(pheromone_field, timestep)
+
+        # 2. 확산 모델 손실 계산
+        diffusion_loss = self._calculate_diffusion_loss(pheromone_field, timestep)
         losses['diffusion_loss'] = diffusion_loss.item()
-        
+
         # 3. 통합 손실 계산 (페로몬 신호와 어텐션의 일관성)
         consistency_loss = self._compute_consistency_loss(agent_embeddings, pheromone_field)
         losses['consistency_loss'] = consistency_loss.item()
-        
+
         # 총 손실
         total_loss = attention_loss + diffusion_loss + 0.1 * consistency_loss
         losses['total_loss'] = total_loss.item()
-        
+
+        # 역전파 및 파라미터 업데이트
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.attention_router.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(self.diffusion_model.parameters(), 1.0)
+        self.attention_optimizer.step()
+        self.diffusion_optimizer.step()
+
         # 학습 히스토리 업데이트
         for key, value in losses.items():
             self.training_history[key].append(value)
-            
+
         return losses
-        
-    def _train_attention_router(self, agent_embeddings: torch.Tensor, rewards: torch.Tensor, timestep: int) -> torch.Tensor:
-        """어텐션 라우터 학습"""
-        self.attention_optimizer.zero_grad()
-        
+
+    def _calculate_attention_loss(self, agent_embeddings: torch.Tensor, rewards: torch.Tensor, timestep: int) -> torch.Tensor:
+        """어텐션 라우터 손실 계산 (역전파 없음)"""
         # Forward pass
         routing_output, attn_weights = self.attention_router(
             agent_embeddings, agent_embeddings, agent_embeddings
         )
-        
+
         # 라우팅 손실 계산
         routing_loss = self.attention_router.compute_routing_loss(attn_weights)
-        
+
         # 보상 기반 손실 (어텐션이 높은 보상으로 이어지도록)
         if rewards is not None:
             # 각 에이전트의 보상에 따른 어텐션 가중치 조정
@@ -111,28 +120,21 @@ class PheromoneNetworkTrainer:
             attention_sum = torch.sum(attn_weights, dim=1)  # 각 에이전트가 받는 총 어텐션
             reward_loss = -torch.mean(reward_normalized * attention_sum.mean(dim=0))
             routing_loss += 0.3 * reward_loss
-            
-        # Backward pass
-        routing_loss.backward(retain_graph=True)
-        torch.nn.utils.clip_grad_norm_(self.attention_router.parameters(), 1.0)
-        self.attention_optimizer.step()
-        
+
         return routing_loss
-        
-    def _train_diffusion_model(self, pheromone_field: torch.Tensor, timestep: int) -> torch.Tensor:
-        """확산 모델 학습"""
-        self.diffusion_optimizer.zero_grad()
-        
+
+    def _calculate_diffusion_loss(self, pheromone_field: torch.Tensor, timestep: int) -> torch.Tensor:
+        """확산 모델 손실 계산 (역전파 없음)"""
         if pheromone_field.numel() == 0:
             return torch.tensor(0.0, device=self.device)
-            
+
         # 시계열 확산 적용
         diffused_field = self.diffusion_model(pheromone_field, timestep)
-        
+
         # 확산 손실 계산 (안정성과 정보 보존의 균형)
         # 1. 과도한 감쇠 방지
         preservation_loss = torch.mean((pheromone_field - diffused_field) ** 2)
-        
+
         # 2. 공간적 일관성 (인접한 셀 간의 부드러운 전환)
         if len(pheromone_field.shape) >= 4:  # (batch, channels, height, width)
             # 수평 차이
@@ -142,19 +144,14 @@ class PheromoneNetworkTrainer:
             smoothness_loss = torch.mean(h_diff) + torch.mean(v_diff)
         else:
             smoothness_loss = torch.tensor(0.0, device=self.device)
-            
+
         # 3. 전체 정보량 보존 (엔트로피 유지)
         field_entropy = -torch.sum(diffused_field * torch.log(diffused_field + 1e-8))
         target_entropy = -torch.sum(pheromone_field * torch.log(pheromone_field + 1e-8))
         entropy_loss = torch.abs(field_entropy - target_entropy)
-        
+
         diffusion_loss = 0.5 * preservation_loss + 0.3 * smoothness_loss + 0.2 * entropy_loss
-        
-        # Backward pass
-        diffusion_loss.backward(retain_graph=True)
-        torch.nn.utils.clip_grad_norm_(self.diffusion_model.parameters(), 1.0)
-        self.diffusion_optimizer.step()
-        
+
         return diffusion_loss
         
     def _compute_consistency_loss(self, agent_embeddings: torch.Tensor, pheromone_field: torch.Tensor) -> torch.Tensor:

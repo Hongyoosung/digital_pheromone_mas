@@ -330,22 +330,26 @@ class DistributedAgent:
     def _compute_behavior_vector(self) -> np.ndarray:
         """Compute behavior dimension from action history"""
         if not self.state.action_history:
-            # 초기값을 더 크게 설정하여 시각화에서 감지 가능하게 함
-            return np.ones(4) * 0.5
+            # 초기값을 크게 증가하여 페로몬 활동도 향상
+            # 수치 안정성을 고려한 적정 초기값 설정
+            return np.ones(4) * 1.2  # 5.0 -> 1.2로 안정화 (오버플로우 방지)
             
         recent_actions = self.state.action_history[-10:]
         behavior = np.zeros(4)
         for action in recent_actions:
             behavior[action] += 1
-        # 정규화 후 최소값 보장
+        # 정규화 후 최소값 대폭 증가
         normalized = behavior / len(recent_actions)
-        return np.maximum(normalized, 0.1)  # 최소 0.1 이상 유지
+        # 안정적인 스케일링 및 overflow 방지
+        scaled = normalized * 2.5 + 0.2  # 적정 스케일링
+        return np.clip(scaled, 0.2, 3.0)  # 범위 제한으로 안정성 보장
         
     def _compute_social_vector(self) -> np.ndarray:
         """Compute social relationship vector"""
         if not self.state.social_connections:
-            # 기본 사회적 활동 레벨 설정
-            social = np.random.rand(10) * 0.2
+            # 기본 사회적 활동 레벨 대폭 증가
+            # 사회적 차원 안정화
+            social = np.random.rand(10) * 1.0 + 0.3  # 0.3~1.3 범위로 안정화
             return social
             
         connections = list(self.state.social_connections.values())[:10]
@@ -353,7 +357,9 @@ class DistributedAgent:
         social[:len(connections)] = connections
         # 최소값 보장 및 정규화 개선
         normalized = social / (np.max(social) + 1e-8)
-        return np.maximum(normalized, 0.05)  # 최소값 보장
+        # 사회적 연결의 안정적 스케일링
+        enhanced = normalized * 1.8 + 0.1
+        return np.clip(enhanced, 0.1, 2.0)  # 범위 제한
         
     def _compute_context_vector(self) -> np.ndarray:
         """Compute environmental context vector"""
@@ -362,10 +368,13 @@ class DistributedAgent:
             self.state.position[1] / self.config['map_size'][1],
             self.state.resources / 100.0,
             self.state.health / 100.0,
-            np.random.rand() * 0.3  # 환경적 요소 추가
+            np.random.rand() * 0.8 + 0.3  # 환경적 요소 안정화 (0.3~1.1 범위)
         ])
-        # 최소값 보장으로 컨텍스트 정보가 완전히 사라지지 않도록 함
-        return np.maximum(context, 0.05)
+        # 최소값 보장을 크게 증가하여 컨텍스트 정보 강화
+        # 컨텍스트 차원 안정화 및 NaN 방지
+        enhanced_context = context * 2.0 + 0.1
+        enhanced_context = np.nan_to_num(enhanced_context, nan=0.1, posinf=2.0, neginf=0.1)
+        return np.clip(enhanced_context, 0.1, 2.5)  # 범위 제한 및 안정성 보장
         
     def communicate(self, target_agent_id: int, message: Dict):
         """Send message to another agent"""
@@ -400,3 +409,14 @@ class DistributedAgent:
     def get_metrics(self) -> Dict:
         """Get agent metrics"""
         return self.metrics
+
+    def get_state(self) -> Dict[str, Any]:
+        """Returns the current state of the agent as a serializable dictionary."""
+        return {
+            "position": self.state.position.tolist(),
+            "resources": self.state.resources,
+            "health": self.state.health,
+            "action_history": self.state.action_history,
+            "emotion_state": self.state.emotion_state.tolist(),
+            "social_connections": self.state.social_connections,
+        }
