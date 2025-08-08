@@ -1,0 +1,50 @@
+# 실험 전반에 대한 설정
+experiment:
+  name: "DigitalPheromoneMAS_Base"
+  log_dir: "results/"
+  device: "cuda:0"
+  save_interval: 100 # 체크포인트 저장 주기
+
+# 시뮬레이션 환경 설정
+environment:
+  map_size: [100, 100] # H, W
+  num_agents: 10
+  max_timesteps: 1000
+
+# 페로몬 관련 설정
+pheromone:
+  decay_rate: 0.95 # 확산 모델의 감쇠 인자 (TemporalDiffusionModel)
+  dimensions:
+    behavior: 4
+    emotion: 5
+    social: 10
+    context: 5
+  lifecycle: # 페로몬 수명 관리 설정
+    min_magnitude_threshold: 0.05 # 이 값 이하의 페로몬은 제거
+    max_lifetime_seconds: 15.0    # 이 시간(초) 이상된 페로몬은 제거
+  
+# 어텐션 네트워크 관련 설정
+attention:
+  embed_dim: 32 # 각 에이전트/페로몬 벡터의 임베딩 차원
+  num_heads: 8    # 멀티-헤드 어텐션의 헤드 수
+  topology_type: "full"  # full, ring, random
+  
+# 학습 및 시뮬레이션 하이퍼파라미터
+hyperparameters:
+  communication_period: [5] # N 타임스텝마다 통신 실행
+  learning_rate: [0.001, 0.0001]
+  batch_size: [32]
+  train_networks: true  # 네트워크 학습 활성화
+  training_frequency: 10  # N 타임스텝마다 학습 수행
+
+# 모니터링 및 로깅 설정
+monitoring:
+  use_wandb: False
+  log_frequency: 200 # N 타임스텝마다 시각화 및 로그 기록
+
+# 메모리 관리 설정  
+memory_management:
+  max_memory_percent: 85.0      # 최대 허용 메모리 사용률
+  warning_memory_percent: 75.0  # 경고 메모리 사용률
+  cleanup_threshold_percent: 80.0 # 자동 정리 시작 임계값
+  memory_monitor_interval: 50   # 메모리 모니터링 간격 (타임스텝)
