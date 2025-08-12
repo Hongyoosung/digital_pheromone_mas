@@ -169,7 +169,37 @@ class MetricsTracker:
         """Get summary statistics of all metrics"""
         summary = {}
         for key, values in self.metrics_history.items():
-            if values:
+            if not values:
+                continue
+
+            # Check if the list contains dictionaries
+            if isinstance(values[0], dict):
+                summary[key] = {}
+                # Aggregate keys from all dictionaries
+                all_sub_keys = set(k for d in values for k in d.keys())
+
+                for sub_key in all_sub_keys:
+                    # Extract values for the sub_key, filtering out None
+                    sub_values = [d.get(sub_key) for d in values if d.get(sub_key) is not None]
+                    
+                    if not sub_values:
+                        continue
+
+                    # Check if all values are numeric
+                    if all(isinstance(v, (int, float)) for v in sub_values):
+                        summary[key][sub_key] = {
+                            'mean': np.mean(sub_values),
+                            'std': np.std(sub_values),
+                            'min': np.min(sub_values),
+                            'max': np.max(sub_values),
+                            'last': sub_values[-1]
+                        }
+                    else:
+                        # For non-numeric, just take the last value
+                        summary[key][sub_key] = {'last': sub_values[-1]}
+            
+            # Handle list of numbers
+            elif isinstance(values[0], (int, float, np.number)):
                 summary[key] = {
                     'mean': np.mean(values),
                     'std': np.std(values),
