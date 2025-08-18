@@ -10,246 +10,320 @@ from tqdm import tqdm
 import argparse
 import pickle
 import json
+import pandas as pd
+from scipy import stats
 
-from src.core.agent import DistributedAgent
-from src.core.pheromone_vector import PheromoneField, PheromoneVector
-from src.models.diffusion_model import TemporalDiffusionModel
-from src.models.attention_network import DistributedAttentionRouter, CentralizedAttentionRouter
+from src.experiments.run_experiment import ExperimentRunner
 from src.utils.metrics import MetricsTracker
 from src.utils.visualization import ExperimentVisualizer
-from src.utils.memory_manager import MemoryManager
 
-# 로깅 설정
-logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-"""
-다양한 모델 타입(디지털 페로몬, 규칙 기반, 중앙집중 어텐션)을 비교하기 위한 실험을 실행하는 스크립트입니다.
---model-type 인자를 통해 비교할 모델을 선택합니다.
-"""
 
 class ComparisonExperimentRunner:
-    """비교 실험 실행기"""
+    """연구 계획서 명시 비교 실험 실행기"""
     
-    def __init__(self, config_path: str, model_type: str):
+    def __init__(self, config_path: str):
         with open(config_path, 'r', encoding='utf-8') as f:
             self.config = yaml.safe_load(f)
         
-        self.model_type = model_type
-        logger.info(f"'{self.model_type}' 모델 타입으로 비교 실험을 시작합니다.")
-
-        # 모델 타입에 따라 실험 설정 수정
-        self.config['experiment']['model_type'] = self.model_type
-        if self.model_type == 'rule_based':
-            # 규칙 기반 모델은 GPU가 필요 없음
-            self.config['experiment']['device'] = 'cpu'
+        self.results_dir = "results/comparison/"
+        os.makedirs(self.results_dir, exist_ok=True)
         
-        self.device = torch.device(self.config['experiment']['device'])
-        self.setup_experiment()
-
-    def setup_experiment(self):
-        """실험 구성요소 초기화"""
-        if ray.is_initialized():
-            ray.shutdown()
-        ray.init(num_cpus=self.config['ray']['num_cpus'], num_gpus=1 if self.device.type == 'cuda' else 0)
-
-        # 모델 초기화
-        self.diffusion_model = TemporalDiffusionModel(decay_factor=self.config['pheromone']['decay_rate']).to(self.device)
+        # 비교 대상 설정
+        self.baseline_methods = self.config['research_design']['baseline_methods']
+        self.num_runs = self.config['research_design']['num_runs']
+        self.significance_level = self.config['research_design']['statistical_analysis']['significance_level']
         
-        if self.model_type == 'centralized_attention':
-            self.attention_router = CentralizedAttentionRouter(
-                embed_dim=self.config['attention']['embed_dim'],
-                num_heads=self.config['attention']['num_heads'],
-                num_agents=self.config['environment']['num_agents']
-            ).to(self.device)
-        elif self.model_type == 'digital_pheromone':
-            self.attention_router = DistributedAttentionRouter(
-                embed_dim=self.config['attention']['embed_dim'],
-                num_heads=self.config['attention']['num_heads']
-            ).to(self.device)
-        else: # rule_based
-            self.attention_router = None
-
-        if self.attention_router:
-            self.attention_router.eval()
-
-        # 유틸리티 초기화
-        self.metrics_tracker = MetricsTracker()
-        log_dir = os.path.join(self.config['experiment']['log_dir'], self.model_type)
-        os.makedirs(log_dir, exist_ok=True)
-        self.visualizer = ExperimentVisualizer(log_dir)
-        self.memory_manager = MemoryManager()
-
-        # 페로몬 필드 및 에이전트 초기화
-        self.pheromone_field = PheromoneField(tuple(self.config['environment']['map_size']), self.config['pheromone']['decay_rate'])
-        self.agents = self._create_agents()
-
-    def _create_agents(self) -> List:
-        """분산 에이전트 생성"""
-        num_agents = self.config['environment']['num_agents']
-        p_dims = self.config['pheromone']['dimensions']
-        pheromone_dim = sum(p_dims.values())
+        # 결과 저장용
+        self.comparison_results = {}
         
-        agent_config = {
-            'map_size': self.config['environment']['map_size'],
-            'pheromone_dim': pheromone_dim,
-            'num_agents': num_agents,
-            'device': self.config['experiment']['device'],
-            'model_type': self.model_type # 에이전트에 모델 타입 전달
+    def run_baseline_experiment(self, method: str, run_id: int) -> Dict:
+        """기준선 실험 실행"""
+        logger.info(f"기준선 실험 실행: {method}, Run {run_id}")
+        
+        # 기준선별 설정 수정
+        baseline_config = self.config.copy()
+        
+        if method == "rule_based_diffusion":
+            # 규칙 기반 확산 모델
+            baseline_config['pheromone']['decay_rate'] = 0.98  # 단순 감쇠
+            baseline_config['attention']['num_heads'] = 1  # 단순 어텐션
+            baseline_config['hyperparameters']['communication_period'] = [10]  # 낮은 통신 빈도
+            
+        elif method == "centralized_attention":
+            # 중앙집중 어텐션 네트워크
+            baseline_config['attention']['topology_type'] = "centralized"
+            baseline_config['hyperparameters']['communication_period'] = [1]  # 높은 통신 빈도
+            
+        # 기준선 실험 실행
+        runner = ExperimentRunner(config_path=None)  # 설정을 직접 전달
+        runner.config = baseline_config
+        runner.setup_experiment()
+        
+        results = runner.run_experiment()
+        
+        # 결과에 메서드 정보 추가
+        results['method'] = method
+        results['run_id'] = run_id
+        
+        return results
+    
+    def run_proposed_method(self, run_id: int) -> Dict:
+        """제안 방법 실험 실행"""
+        logger.info(f"제안 방법 실험 실행: Run {run_id}")
+        
+        runner = ExperimentRunner(config_path=None)
+        runner.config = self.config
+        runner.setup_experiment()
+        
+        results = runner.run_experiment()
+        results['method'] = 'proposed_digital_pheromone'
+        results['run_id'] = run_id
+        
+        return results
+    
+    def run_comparison_experiment(self):
+        """전체 비교 실험 실행"""
+        logger.info("연구 계획서 명시 비교 실험 시작")
+        
+        all_results = []
+        
+        # 제안 방법 실험 (10회 반복)
+        logger.info("제안 방법 실험 실행 중...")
+        for run_id in tqdm(range(self.num_runs), desc="제안 방법"):
+            try:
+                results = self.run_proposed_method(run_id)
+                all_results.append(results)
+                
+                # 중간 결과 저장
+                with open(os.path.join(self.results_dir, f"proposed_run_{run_id}.pkl"), 'wb') as f:
+                    pickle.dump(results, f)
+                    
+            except Exception as e:
+                logger.error(f"제안 방법 Run {run_id} 실패: {e}")
+        
+        # 기준선 방법들 실험
+        for method in self.baseline_methods:
+            logger.info(f"{method} 기준선 실험 실행 중...")
+            for run_id in tqdm(range(self.num_runs), desc=method):
+                try:
+                    results = self.run_baseline_experiment(method, run_id)
+                    all_results.append(results)
+                    
+                    # 중간 결과 저장
+                    with open(os.path.join(self.results_dir, f"{method}_run_{run_id}.pkl"), 'wb') as f:
+                        pickle.dump(results, f)
+                        
+                except Exception as e:
+                    logger.error(f"{method} Run {run_id} 실패: {e}")
+        
+        # 결과 분석
+        self.analyze_comparison_results(all_results)
+        
+        # 최종 결과 저장
+        with open(os.path.join(self.results_dir, "comparison_results.pkl"), 'wb') as f:
+            pickle.dump(all_results, f)
+        
+        logger.info("비교 실험 완료")
+        return all_results
+    
+    def analyze_comparison_results(self, all_results: List[Dict]):
+        """비교 실험 결과 분석"""
+        logger.info("비교 실험 결과 분석 중...")
+        
+        # 결과를 메서드별로 분류
+        method_results = {}
+        for result in all_results:
+            method = result['method']
+            if method not in method_results:
+                method_results[method] = []
+            method_results[method].append(result)
+        
+        # 주요 지표들 추출
+        metrics_to_analyze = [
+            'information_transfer_efficiency',
+            'learning_convergence_epochs', 
+            'communication_overhead',
+            'network_load',
+            'shannon_entropy',
+            'success_rate',
+            'reward'
+        ]
+        
+        analysis_results = {}
+        
+        for metric in metrics_to_analyze:
+            metric_data = {}
+            
+            for method, results in method_results.items():
+                values = []
+                for result in results:
+                    # 메트릭 값 추출
+                    if metric in result.get('training_summary', {}).get('research_metrics', {}):
+                        value = result['training_summary']['research_metrics'][metric]
+                    elif metric in result.get('training_summary', {}).get('performance_analysis', {}):
+                        value = result['training_summary']['performance_analysis'][metric].get('final', 0)
+                    else:
+                        value = 0.0
+                    
+                    values.append(value)
+                
+                metric_data[method] = {
+                    'mean': np.mean(values),
+                    'std': np.std(values),
+                    'min': np.min(values),
+                    'max': np.max(values),
+                    'values': values
+                }
+            
+            analysis_results[metric] = metric_data
+        
+        # 통계적 유의성 검정
+        statistical_tests = {}
+        
+        for metric, metric_data in analysis_results.items():
+            if 'proposed_digital_pheromone' in metric_data:
+                proposed_values = metric_data['proposed_digital_pheromone']['values']
+                
+                for method in self.baseline_methods:
+                    if method in metric_data:
+                        baseline_values = metric_data[method]['values']
+                        
+                        # t-검정 수행
+                        t_stat, p_value = stats.ttest_ind(proposed_values, baseline_values)
+                        
+                        statistical_tests[f"{metric}_{method}"] = {
+                            't_statistic': t_stat,
+                            'p_value': p_value,
+                            'significant': p_value < self.significance_level,
+                            'effect_size': (np.mean(proposed_values) - np.mean(baseline_values)) / np.sqrt(
+                                (np.var(proposed_values) + np.var(baseline_values)) / 2
+                            )
+                        }
+        
+        # 분석 결과 저장
+        self.comparison_results = {
+            'method_results': method_results,
+            'analysis_results': analysis_results,
+            'statistical_tests': statistical_tests
         }
         
-        AgentActor = DistributedAgent.options(num_cpus=0.25, num_gpus=1.0/num_agents if self.device.type == 'cuda' and num_agents > 0 else 0)
-        return [AgentActor.remote(i, agent_config) for i in range(num_agents)]
-
-    def run_timestep(self, t: int) -> Dict:
-        """단일 타임스텝 시뮬레이션 실행"""
-        timestep_metrics = {}
-        comp_load = {}
-
-        # Phase 1: 행동 결정
-        start_time = time.perf_counter()
-        field_dict = {pos: pheromones for pos, pheromones in self.pheromone_field.field.items()}
+        # 분석 결과를 CSV로 저장
+        self.save_analysis_to_csv(analysis_results, statistical_tests)
         
-        if self.model_type == 'rule_based':
-            # 규칙 기반: 각 에이전트가 독립적으로 주변 페로몬만 보고 행동 결정
-            perception_futures = [agent.perceive_pheromones.remote(field_dict) for agent in self.agents]
-            encoded_pheromones = ray.get(perception_futures)
-            action_futures = [agent.decide_action_rule_based.remote(encoded) for agent, encoded in zip(self.agents, encoded_pheromones)]
-            actions = ray.get(action_futures)
-        else:
-            # 어텐션 기반: 다른 에이전트 정보를 종합하여 행동 결정
-            perception_futures = [agent.perceive_pheromones.remote(field_dict) for agent in self.agents]
-            encoded_pheromones = ray.get(perception_futures)
-            action_futures = [agent.decide_action.remote(p) for agent, p in zip(self.agents, encoded_pheromones)]
-            actions = ray.get(action_futures)
-        comp_load['action_decision'] = time.perf_counter() - start_time
-
-        # Phase 1.5: 행동 실행 및 상태 업데이트
-        # (이 부분은 run_experiment.py와 동일하게 유지)
-        environment_state = {'field_density': len(self.pheromone_field.field), 'timestep': t}
-        action_futures = [agent.execute_action.remote(act, environment_state) for agent, act in zip(self.agents, actions)]
-        action_results = ray.get(action_futures)
+        # 분석 보고서 생성
+        self.generate_comparison_report(analysis_results, statistical_tests)
+    
+    def save_analysis_to_csv(self, analysis_results: Dict, statistical_tests: Dict):
+        """분석 결과를 CSV 파일로 저장"""
+        # 메트릭별 결과 테이블
+        metric_data = []
+        for metric, metric_data_dict in analysis_results.items():
+            for method, stats_dict in metric_data_dict.items():
+                metric_data.append({
+                    'metric': metric,
+                    'method': method,
+                    'mean': stats_dict['mean'],
+                    'std': stats_dict['std'],
+                    'min': stats_dict['min'],
+                    'max': stats_dict['max']
+                })
         
-        successful_actions = sum(1 for res in action_results if res['success'])
-        total_reward = sum(res['reward'] for res in action_results)
-        timestep_metrics['success_rate'] = successful_actions / len(action_results) if action_results else 0
-        timestep_metrics['average_reward'] = total_reward / len(action_results) if action_results else 0
-
-        # Phase 2: 페로몬 방출 및 필드 업데이트
-        # (이 부분은 run_experiment.py와 동일하게 유지)
-        pheromone_futures = [agent.emit_pheromone.remote() for agent in self.agents]
-        new_pheromones = ray.get(pheromone_futures)
-        for i, p in enumerate(new_pheromones):
-            if p:
-                # 에이전트의 현재 위치를 가져와 페로몬을 증착
-                agent_state = ray.get(self.agents[i].get_state.remote())
-                pos = tuple(agent_state['position'])
-                self.pheromone_field.deposit(pos, p)
-
-        # Phase 3: 확산 및 감쇠
-        if self.model_type == 'rule_based':
-            # 규칙 기반 확산: 간단한 평균 필터 사용
-            self.pheromone_field.diffuse(radius=2, method='average')
-        else:
-            # 모델 기반 확산
-            # (이 부분은 run_experiment.py와 동일하게 유지)
-            pass
-        self.pheromone_field.decay_all()
+        df_metrics = pd.DataFrame(metric_data)
+        df_metrics.to_csv(os.path.join(self.results_dir, "comparison_metrics.csv"), index=False)
         
-        # Phase 4: 통신 (모델별로 다름)
-        comm_metrics = {}
-        if t > 0 and t % self.config['hyperparameters']['communication_period'][0] == 0:
-            if self.model_type == 'centralized_attention':
-                comm_metrics = self.execute_centralized_communication()
-            elif self.model_type == 'digital_pheromone':
-                comm_metrics = self.execute_distributed_communication()
-            # 규칙 기반 모델은 명시적 통신 없음
-        self.metrics_tracker.update(communication_overhead=comm_metrics)
-
-        # 메트릭 수집
-        field_tensor = self.create_field_tensor()
-        if field_tensor.nelement() > 0:
-            timestep_metrics['shannon_entropy'] = self.metrics_tracker.compute_shannon_entropy(field_tensor.cpu().numpy())
-        timestep_metrics['computation_overhead'] = comp_load
+        # 통계 검정 결과 테이블
+        test_data = []
+        for test_name, test_result in statistical_tests.items():
+            test_data.append({
+                'test': test_name,
+                't_statistic': test_result['t_statistic'],
+                'p_value': test_result['p_value'],
+                'significant': test_result['significant'],
+                'effect_size': test_result['effect_size']
+            })
         
-        return timestep_metrics
-
-    def execute_centralized_communication(self) -> Dict:
-        """중앙집중 어텐션 기반 통신 실행"""
-        logger.info("중앙집중 통신 실행")
-        agent_states = ray.get([agent.get_state.remote() for agent in self.agents])
-        embeddings = torch.tensor([s['embedding'] for s in agent_states]).unsqueeze(0).to(self.device)
+        df_tests = pd.DataFrame(test_data)
+        df_tests.to_csv(os.path.join(self.results_dir, "statistical_tests.csv"), index=False)
+    
+    def generate_comparison_report(self, analysis_results: Dict, statistical_tests: Dict):
+        """비교 실험 보고서 생성"""
+        report_path = os.path.join(self.results_dir, "comparison_report.txt")
         
-        with torch.no_grad():
-            # 중앙 라우터가 모든 에이전트의 정보를 받아 라우팅 결정
-            _, attention_weights = self.attention_router(embeddings)
-        
-        # 모든 에이전트가 모든 다른 에이전트에게 메시지 전송 (오버헤드가 큼)
-        num_agents = len(self.agents)
-        messages = []
-        for i in range(num_agents):
-            for j in range(num_agents):
-                if i != j:
-                    message_data = np.random.randn(10)
-                    messages.append({'size': message_data.nbytes})
-        
-        return self.metrics_tracker.track_communication_overhead(messages)
-
-    def execute_distributed_communication(self) -> Dict:
-        """분산 어텐션 기반 통신 실행 (기존 방식)"""
-        logger.info("분산 통신 실행")
-        # (이 로직은 run_experiment.py의 execute_communication_round와 동일)
-        num_agents = len(self.agents)
-        messages = []
-        # ... (메시지 생성 로직) ...
-        return self.metrics_tracker.track_communication_overhead(messages)
-
-    def create_field_tensor(self) -> torch.Tensor:
-        # (run_experiment.py와 동일)
-        H, W = self.config['environment']['map_size']
-        p_dims = self.config['pheromone']['dimensions']
-        dim_count = sum(p_dims.values())
-        field_tensor = torch.zeros(1, dim_count, H, W, device=self.device, dtype=torch.float32)
-        # ...
-        return field_tensor
-
-    def run_experiment(self):
-        """전체 비교 실험 실행"""
-        logger.info(f"'{self.model_type}' 모델 타입으로 실험 시작")
-        
-        max_timesteps = self.config['environment']['max_timesteps']
-        for t in tqdm(range(max_timesteps), desc=f"Running {self.model_type}"):
-            if not self.memory_manager.should_continue_training():
-                logger.error("메모리 부족으로 시뮬레이션 중단")
-                break
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write("=" * 80 + "\n")
+            f.write("4D 디지털 페로몬 MAS 비교 실험 보고서\n")
+            f.write("=" * 80 + "\n\n")
             
-            timestep_metrics = self.run_timestep(t)
-            self.metrics_tracker.update(**timestep_metrics)
-
-        # 결과 저장
-        summary = self.metrics_tracker.get_summary()
-        log_dir = os.path.join(self.config['experiment']['log_dir'], self.model_type)
-        summary_path = os.path.join(log_dir, 'final_summary.json')
-        with open(summary_path, 'w') as f:
-            json.dump(summary, f, indent=4)
+            f.write("📊 실험 개요\n")
+            f.write("-" * 40 + "\n")
+            f.write(f"제안 방법: 4D 디지털 페로몬 + 분산 어텐션 네트워크\n")
+            f.write(f"기준선 방법: {', '.join(self.baseline_methods)}\n")
+            f.write(f"반복 실행 횟수: {self.num_runs}회\n")
+            f.write(f"유의수준: α = {self.significance_level}\n\n")
+            
+            f.write("📈 성능 비교 결과\n")
+            f.write("-" * 40 + "\n")
+            
+            for metric, metric_data in analysis_results.items():
+                f.write(f"\n{metric.upper()}:\n")
+                for method, stats in metric_data.items():
+                    f.write(f"  {method}: {stats['mean']:.4f} ± {stats['std']:.4f} "
+                           f"(범위: {stats['min']:.4f} - {stats['max']:.4f})\n")
+            
+            f.write("\n🔬 통계적 유의성 검정 결과\n")
+            f.write("-" * 40 + "\n")
+            
+            significant_tests = [name for name, result in statistical_tests.items() 
+                               if result['significant']]
+            
+            if significant_tests:
+                f.write("통계적으로 유의한 차이를 보인 지표들:\n")
+                for test_name in significant_tests:
+                    result = statistical_tests[test_name]
+                    f.write(f"  - {test_name}: t = {result['t_statistic']:.3f}, "
+                           f"p = {result['p_value']:.4f}, "
+                           f"효과크기 = {result['effect_size']:.3f}\n")
+            else:
+                f.write("통계적으로 유의한 차이를 보인 지표가 없습니다.\n")
+            
+            f.write("\n💡 결론 및 권장사항\n")
+            f.write("-" * 40 + "\n")
+            
+            # 성능 향상도 계산
+            improvements = {}
+            for metric, metric_data in analysis_results.items():
+                if 'proposed_digital_pheromone' in metric_data:
+                    proposed_mean = metric_data['proposed_digital_pheromone']['mean']
+                    
+                    for method in self.baseline_methods:
+                        if method in metric_data:
+                            baseline_mean = metric_data[method]['mean']
+                            improvement = ((proposed_mean - baseline_mean) / baseline_mean) * 100
+                            improvements[f"{metric}_{method}"] = improvement
+            
+            if improvements:
+                f.write("제안 방법의 성능 향상도:\n")
+                for key, improvement in improvements.items():
+                    f.write(f"  - {key}: {improvement:+.2f}%\n")
+            
+            f.write("\n" + "=" * 80 + "\n")
+            f.write("보고서 생성 완료\n")
+            f.write("=" * 80 + "\n")
         
-        logger.info(f"'{self.model_type}' 실험 완료. 결과 저장: {summary_path}")
-        ray.shutdown()
-        return summary
-
+        logger.info(f"비교 실험 보고서가 저장되었습니다: {report_path}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Run Comparison Experiments for Digital Pheromone MAS")
+    parser = argparse.ArgumentParser(description="Run Digital Pheromone MAS Comparison Experiment")
     parser.add_argument('--config', type=str, default='config/experiment_config.yaml',
-                        help='실험 설정 파일 경로')
-    parser.add_argument('--model-type', type=str, required=True,
-                        choices=['digital_pheromone', 'rule_based', 'centralized_attention'],
-                        help='실행할 모델 타입을 선택합니다.')
+                        help='Path to the experiment configuration file.')
     args = parser.parse_args()
     
-    runner = ComparisonExperimentRunner(config_path=args.config, model_type=args.model_type)
-    runner.run_experiment()
+    # 비교 실험 실행
+    comparison_runner = ComparisonExperimentRunner(config_path=args.config)
+    results = comparison_runner.run_comparison_experiment()
+    
+    logger.info("비교 실험 완료!")
 
 if __name__ == "__main__":
     main()

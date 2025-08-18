@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(python:*)",
-      "Bash(del test_fixes.py)"
+      "Bash(del test_fixes.py)",
+      "Bash(del temp_test_config.yaml)",
+      "Bash(rm:*)",
+      "Bash(del test_visualization_fix.py)",
+      "Bash(timeout 120 python -m src.experiments.run_experiment)"
     ],
     "deny": []
   }

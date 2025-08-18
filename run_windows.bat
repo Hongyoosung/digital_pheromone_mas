@@ -37,9 +37,9 @@ set RAY_memory_monitor_refresh_ms=1000
 set OMP_NUM_THREADS=16
 set RAY_MEMORY_LIMIT=25769803776
 
-REM Run the experiment with high-performance configuration
+REM Run the experiment with high-performance configuration (shorter test)
 echo Starting high-performance experiment on RTX A6000...
-python -m src.experiments.run_experiment --config config/experiment_config.yaml --num_runs 3
+python -m src.experiments.run_experiment --config config/experiment_config.yaml
 
 echo Experiment completed!
 pause

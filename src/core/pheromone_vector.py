@@ -83,6 +83,18 @@ class PheromoneVector:
             agent_id=self.agent_id
         )
 
+    @classmethod
+    def zeros(cls, p_dims: Dict[str, int]):
+        """Create a PheromoneVector filled with zeros."""
+        return cls(
+            behavior=np.zeros(p_dims['behavior']),
+            emotion=np.zeros(p_dims['emotion']),
+            social=np.zeros(p_dims['social']),
+            context=np.zeros(p_dims['context']),
+            timestamp=0.0,
+            agent_id=-1
+        )
+
 class PheromoneEncoder(nn.Module):
     """Neural encoder for pheromone vectors"""
     def __init__(self, input_dim: int, hidden_dim: int, output_dim: int):
@@ -108,11 +120,55 @@ class PheromoneField:
         self.decay_rate = decay_rate
         self.field: Dict[Tuple[int, int], List[PheromoneVector]] = {}
         
+        # 초기 페로몬 필드 생성 - 빈 필드 문제 해결
+        self._initialize_field()
+        
+    def _initialize_field(self):
+        """초기 페로몬 필드를 랜덤하게 생성하여 활성화"""
+        logger.info(f"페로몬 필드 초기화: {self.grid_size}")
+        
+        # 맵의 10% 위치에 초기 페로몬 생성
+        num_initial_pheromones = max(1, int(self.grid_size[0] * self.grid_size[1] * 0.1))
+        
+        for _ in range(num_initial_pheromones):
+            x = np.random.randint(0, self.grid_size[0])
+            y = np.random.randint(0, self.grid_size[1])
+            position = (x, y)
+            
+            # 초기 페로몬 벡터 생성
+            initial_pheromone = PheromoneVector(
+                behavior=np.random.rand(4) * 2.0 + 0.5,  # 0.5~2.5 범위
+                emotion=np.random.rand(5) * 1.5 + 0.3,   # 0.3~1.8 범위
+                social=np.random.rand(10) * 1.2 + 0.2,   # 0.2~1.4 범위
+                context=np.random.rand(5) * 1.8 + 0.4,   # 0.4~2.2 범위
+                timestamp=time.time(),
+                agent_id=-1  # 시스템 생성 페로몬
+            )
+            
+            self.field[position] = [initial_pheromone]
+        
+        logger.info(f"초기 페로몬 {len(self.field)}개 생성 완료")
+        
     def deposit(self, position: Tuple[int, int], pheromone: PheromoneVector):
-        """Deposit pheromone at position"""
+        """Deposit pheromone at position with enhanced logic"""
         if position not in self.field:
             self.field[position] = []
-        self.field[position].append(pheromone)
+        
+        # 페로몬 강도 증가 (기존 문제 해결)
+        enhanced_pheromone = PheromoneVector(
+            behavior=np.clip(pheromone.behavior * 3.0, 0.1, 5.0),  # 강도 증가
+            emotion=np.clip(pheromone.emotion * 2.5, 0.1, 4.0),
+            social=np.clip(pheromone.social * 2.8, 0.1, 4.5),
+            context=np.clip(pheromone.context * 2.2, 0.1, 3.5),
+            timestamp=pheromone.timestamp,
+            agent_id=pheromone.agent_id
+        )
+        
+        self.field[position].append(enhanced_pheromone)
+        
+        # 디버깅을 위한 로깅 (필요시 주석 처리)
+        if len(self.field[position]) % 10 == 0:
+            logger.debug(f"위치 {position}에 페로몬 {len(self.field[position])}개 누적")
         
     def diffuse(self, radius: int = 5, device: str = 'cuda'):
         """Diffuse pheromones using GPU-accelerated convolution."""
@@ -216,13 +272,17 @@ class PheromoneField:
         current_time = time.time()
         empty_positions = []
         
+        # 감쇠율을 더 보수적으로 조정 (기존 문제 해결)
+        effective_decay_rate = min(0.99, self.decay_rate)  # 최대 1% 감쇠
+        
         for pos, pheromones in list(self.field.items()):
             surviving_pheromones = []
             for p in pheromones:
-                p.decay(self.decay_rate)
+                p.decay(effective_decay_rate)
                 
-                is_strong_enough = p.get_total_magnitude() > min_magnitude_threshold
-                is_not_expired = (current_time - p.timestamp) < max_lifetime_seconds
+                # 임계값을 낮춰서 더 많은 페로몬이 유지되도록 함
+                is_strong_enough = p.get_total_magnitude() > min_magnitude_threshold * 0.5
+                is_not_expired = (current_time - p.timestamp) < max_lifetime_seconds * 2.0  # 수명 2배 연장
                 
                 if is_strong_enough and is_not_expired:
                     surviving_pheromones.append(p)
@@ -234,6 +294,10 @@ class PheromoneField:
         
         for pos in empty_positions:
             del self.field[pos]
+            
+        # 디버깅을 위한 로깅
+        if len(self.field) % 50 == 0:
+            logger.debug(f"페로몬 감쇠 후 남은 위치: {len(self.field)}개")
                 
     def get_pheromones(self, position: Tuple[int, int]) -> List[PheromoneVector]:
         """Get pheromones at position"""

@@ -167,7 +167,7 @@ if __name__ == '__main__':
     # 모델 사용 예시
     batch_size = 4
     num_agents = 10  # 전체 에이전트 수
-    embed_dim = 32   # 페로몬 벡터 차원
+    embed_dim = 64   # 에이전트 인코더 출력 차원
     num_heads = 8    # 어텐션 헤드 수
 
     # 모델 초기화

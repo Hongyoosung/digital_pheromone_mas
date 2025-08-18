@@ -47,8 +47,21 @@ class DistributedAgent:
             'messages_received': 0,
             'bytes_sent': 0,
             'bytes_received': 0,
-            'computation_time': 0
+            'computation_time': 0,
+            'successful_actions': 0,
+            'total_actions': 0,
+            'cooperation_events': 0,
+            'competition_events': 0,
+            'action_timestamps': [],
+            'action_results': [],
+            'cooperation_history': [],
+            'real_computation_times': []
         }
+        
+        # Initialize action tracking
+        self.last_action_success = False
+        self.last_action_reward = 0.0
+        self.last_computation_time = 0.0
         
     def _initialize_state(self) -> AgentState:
         """Initialize agent state"""
@@ -126,7 +139,20 @@ class DistributedAgent:
             action_logits = self.decision_network(combined)
             action_probs = torch.softmax(action_logits, dim=-1)
             
-            action = torch.multinomial(action_probs, 1).item()
+            # 탐험을 위한 엡실론-그리디 정책 추가
+            epsilon = 0.3  # 30% 확률로 랜덤 행동
+            if np.random.random() < epsilon:
+                action = np.random.randint(0, 4)
+            else:
+                action = torch.multinomial(action_probs, 1).item()
+            
+            # 상태에 따른 행동 편향 추가
+            if self.state.resources < 30:  # 자원이 부족하면 수집 행동 선호
+                if np.random.random() < 0.4:
+                    action = 1  # collect
+            elif self.state.health < 50:  # 체력이 낮으면 회피 행동 선호
+                if np.random.random() < 0.4:
+                    action = 3  # evade
         
         # 액션 히스토리 길이 제한 (메모리 절약)
         if len(self.state.action_history) >= 20:  # 최대 20개만 보관
@@ -137,11 +163,16 @@ class DistributedAgent:
         
     def execute_action(self, action: int, environment_state: Dict = None) -> Dict:
         """Execute chosen action and update agent state"""
+        start_time = time.perf_counter()
         action_result = {'success': False, 'reward': 0.0, 'info': {}}
+        
+        # 실제 행동 추적 시작
+        self.metrics['total_actions'] += 1
+        action_timestamp = time.time()
         
         # 0: move, 1: collect, 2: attack, 3: evade
         if action == 0:  # Move
-            action_result = self._execute_move()
+            action_result = self._execute_move(environment_state)
         elif action == 1:  # Collect resources
             action_result = self._execute_collect(environment_state)
         elif action == 2:  # Attack/compete
@@ -149,6 +180,28 @@ class DistributedAgent:
         elif action == 3:  # Evade/retreat
             action_result = self._execute_evade()
             
+        # 실제 실행 시간 측정 완료
+        execution_time = time.perf_counter() - start_time
+        self.metrics['real_computation_times'].append(execution_time)
+        
+        # 행동 결과 추적
+        if action_result['success']:
+            self.metrics['successful_actions'] += 1
+        
+        # 행동 이력 기록
+        self.metrics['action_timestamps'].append(action_timestamp)
+        self.metrics['action_results'].append({
+            'action': action,
+            'success': action_result['success'],
+            'reward': action_result['reward'],
+            'execution_time': execution_time,
+            'timestamp': action_timestamp
+        })
+        
+        # Store last action results for state tracking
+        self.last_action_success = action_result['success']
+        self.last_action_reward = action_result['reward']
+        
         # Update emotional state based on action result
         self._update_emotional_state(action, action_result)
         
@@ -157,21 +210,46 @@ class DistributedAgent:
         
         return action_result
         
-    def _execute_move(self) -> Dict:
-        """Execute movement action"""
-        # Random movement within bounds
-        dx = np.random.uniform(-2.0, 2.0)
-        dy = np.random.uniform(-2.0, 2.0)
+    def _execute_move(self, environment_state: Dict = None) -> Dict:
+        """Execute movement action with improved mobility"""
+        # 현재 위치에서 더 자연스러운 이동
+        current_x, current_y = self.state.position
         
-        new_x = np.clip(self.state.position[0] + dx, 0, self.config['map_size'][0] - 1)
-        new_y = np.clip(self.state.position[1] + dy, 0, self.config['map_size'][1] - 1)
+        # 이동 방향 결정 (더 다양한 패턴)
+        if np.random.random() < 0.3:  # 30% 확률로 랜덤 이동
+            # 랜덤 방향 이동
+            angle = np.random.uniform(0, 2 * np.pi)
+            distance = np.random.uniform(1, 3)
+            new_x = current_x + distance * np.cos(angle)
+            new_y = current_y + distance * np.sin(angle)
+        else:
+            # 목표 지점으로의 이동 (더 자연스러운 패턴)
+            target_x = np.random.uniform(0, self.config['map_size'][0])
+            target_y = np.random.uniform(0, self.config['map_size'][1])
+            
+            # 현재 위치에서 목표까지의 방향
+            dx = target_x - current_x
+            dy = target_y - current_y
+            distance = np.sqrt(dx**2 + dy**2)
+            
+            if distance > 0:
+                # 최대 이동 거리 제한
+                max_step = min(2.0, distance)
+                new_x = current_x + (dx / distance) * max_step
+                new_y = current_y + (dy / distance) * max_step
+            else:
+                new_x, new_y = current_x, current_y
         
-        old_pos = self.state.position.copy()
+        # 맵 경계 내로 제한
+        new_x = np.clip(new_x, 0, self.config['map_size'][0] - 1)
+        new_y = np.clip(new_y, 0, self.config['map_size'][1] - 1)
+        
+        # 위치 업데이트
         self.state.position = np.array([new_x, new_y])
         
-        # Movement costs energy
-        distance = np.linalg.norm(self.state.position - old_pos)
-        energy_cost = distance * 0.5
+        # 이동 비용 계산
+        distance = np.sqrt((new_x - current_x)**2 + (new_y - current_y)**2)
+        energy_cost = distance * 0.5  # 이동 거리에 비례한 에너지 소모
         self.state.resources = max(0, self.state.resources - energy_cost)
         
         return {
@@ -185,52 +263,58 @@ class DistributedAgent:
         # Simulate resource collection
         collected = np.random.exponential(5.0)  # Random resource amount
         
-        # Success probability based on current position and health
-        success_prob = min(0.8, self.state.health / 100.0 + 0.2)
+        # Success probability based on current position and health - 현실적으로 조정
+        base_success = self.state.health / 100.0
+        # 자원 경쟁도 추가 (다른 에이전트가 근처에 있으면 성공률 감소)
+        resource_competition_factor = max(0.1, 1.0 - len(self.state.social_connections) * 0.05)
+        success_prob = min(0.75, base_success * resource_competition_factor + 0.2)  # 0.9 -> 0.75로 감소
         
         if np.random.random() < success_prob:
             self.state.resources += collected
             return {
                 'success': True,
-                'reward': collected * 0.1,
+                'reward': collected * 0.15,  # 보상 증가: 0.1 -> 0.15
                 'info': {'collected': collected}
             }
         else:
-            # Failed collection costs health
-            self.state.health = max(0, self.state.health - 5.0)
+            # Failed collection costs health - 페널티 감소
+            self.state.health = max(0, self.state.health - 3.0)  # 5.0 -> 3.0
             return {
                 'success': False,
-                'reward': -0.5,
-                'info': {'health_lost': 5.0}
+                'reward': -0.3,  # 페널티 감소: -0.5 -> -0.3
+                'info': {'health_lost': 3.0}
             }
             
     def _execute_attack(self, environment_state: Dict = None) -> Dict:
         """Execute attack/competition action"""
-        # Attack success depends on health and resources
+        # Attack success depends on health and resources - 현실적 조정
         attack_strength = (self.state.health + self.state.resources) / 200.0
-        success_prob = min(0.7, attack_strength)
+        # 사회적 갈등 요소 추가 (부정적 연결이 있으면 공격 성공률 증가)
+        negative_connections = sum(1 for strength in self.state.social_connections.values() if strength < 0)
+        aggression_boost = negative_connections * 0.1
+        success_prob = min(0.65, attack_strength + 0.15 + aggression_boost)  # 0.8 -> 0.65로 감소
         
         if np.random.random() < success_prob:
             # Successful attack - gain resources but lose health
-            gained_resources = np.random.uniform(10, 30)
-            health_cost = np.random.uniform(5, 15)
+            gained_resources = np.random.uniform(15, 35)  # 보상 증가: 10-30 -> 15-35
+            health_cost = np.random.uniform(3, 12)  # 비용 감소: 5-15 -> 3-12
             
             self.state.resources += gained_resources
             self.state.health = max(0, self.state.health - health_cost)
             
             return {
                 'success': True,
-                'reward': gained_resources * 0.05,
+                'reward': gained_resources * 0.08,  # 보상 증가: 0.05 -> 0.08
                 'info': {'gained_resources': gained_resources, 'health_cost': health_cost}
             }
         else:
-            # Failed attack - significant health loss
-            health_lost = np.random.uniform(15, 25)
+            # Failed attack - health loss 감소
+            health_lost = np.random.uniform(10, 20)  # 페널티 감소: 15-25 -> 10-20
             self.state.health = max(0, self.state.health - health_lost)
             
             return {
                 'success': False,
-                'reward': -1.0,
+                'reward': -0.7,  # 페널티 감소: -1.0 -> -0.7
                 'info': {'health_lost': health_lost}
             }
             
@@ -295,12 +379,45 @@ class DistributedAgent:
         if other_agent_id not in self.state.social_connections:
             self.state.social_connections[other_agent_id] = 0.0
             
+        # 실제 상호작용 이벤트 기록
+        interaction_record = {
+            'other_agent_id': other_agent_id,
+            'interaction_type': interaction_type,
+            'strength': strength,
+            'timestamp': time.time()
+        }
+        
+        # 현실적 경쟁/갈등 메커니즘 강화
+        competition_probability = 0.3  # 30% 확률로 경쟁 상황 발생
+        
         if interaction_type == 'cooperation':
-            self.state.social_connections[other_agent_id] += strength * 2
+            self.state.social_connections[other_agent_id] += strength * 1.5  # 3 -> 1.5로 조정
+            self.metrics['cooperation_events'] += 1
+            interaction_record['result'] = 'positive'
         elif interaction_type == 'competition':
-            self.state.social_connections[other_agent_id] -= strength
+            # 경쟁 페널티 강화
+            penalty_multiplier = np.random.uniform(1.0, 2.5)  # 0.5 -> 1.0~2.5로 강화
+            self.state.social_connections[other_agent_id] -= strength * penalty_multiplier
+            self.metrics['competition_events'] += 1
+            interaction_record['result'] = 'negative'
         elif interaction_type == 'communication':
-            self.state.social_connections[other_agent_id] += strength
+            # 통신도 때로는 갈등을 야기할 수 있음
+            if np.random.random() < competition_probability:
+                # 통신 중 오해나 갈등 발생
+                self.state.social_connections[other_agent_id] -= strength * 0.3
+                interaction_record['result'] = 'conflict_in_communication'
+                self.metrics['competition_events'] += 1
+            else:
+                self.state.social_connections[other_agent_id] += strength * 0.8
+                interaction_record['result'] = 'positive_communication'
+            
+        # 협력 이력 기록
+        self.metrics['cooperation_history'].append(interaction_record)
+        
+        # 연결 강도 제한
+        self.state.social_connections[other_agent_id] = np.clip(
+            self.state.social_connections[other_agent_id], -1.0, 1.0
+        )
             
         # Clamp values
         self.state.social_connections[other_agent_id] = np.clip(
@@ -332,7 +449,7 @@ class DistributedAgent:
         if not self.state.action_history:
             # 초기값을 크게 증가하여 페로몬 활동도 향상
             # 수치 안정성을 고려한 적정 초기값 설정
-            return np.ones(4) * 1.2  # 5.0 -> 1.2로 안정화 (오버플로우 방지)
+            return np.ones(4) * 2.5  # 1.2 -> 2.5로 증가 (페로몬 강도 향상)
             
         recent_actions = self.state.action_history[-10:]
         behavior = np.zeros(4)
@@ -341,15 +458,15 @@ class DistributedAgent:
         # 정규화 후 최소값 대폭 증가
         normalized = behavior / len(recent_actions)
         # 안정적인 스케일링 및 overflow 방지
-        scaled = normalized * 2.5 + 0.2  # 적정 스케일링
-        return np.clip(scaled, 0.2, 3.0)  # 범위 제한으로 안정성 보장
+        scaled = normalized * 4.0 + 0.5  # 2.5 -> 4.0으로 증가
+        return np.clip(scaled, 0.5, 5.0)  # 범위 확장: 0.2~3.0 -> 0.5~5.0
         
     def _compute_social_vector(self) -> np.ndarray:
         """Compute social relationship vector"""
         if not self.state.social_connections:
             # 기본 사회적 활동 레벨 대폭 증가
             # 사회적 차원 안정화
-            social = np.random.rand(10) * 1.0 + 0.3  # 0.3~1.3 범위로 안정화
+            social = np.random.rand(10) * 2.0 + 0.5  # 1.0 -> 2.0으로 증가, 0.3~1.3 -> 0.5~2.5
             return social
             
         connections = list(self.state.social_connections.values())[:10]
@@ -358,8 +475,8 @@ class DistributedAgent:
         # 최소값 보장 및 정규화 개선
         normalized = social / (np.max(social) + 1e-8)
         # 사회적 연결의 안정적 스케일링
-        enhanced = normalized * 1.8 + 0.1
-        return np.clip(enhanced, 0.1, 2.0)  # 범위 제한
+        enhanced = normalized * 3.0 + 0.3  # 1.8 -> 3.0으로 증가
+        return np.clip(enhanced, 0.3, 4.0)  # 범위 확장: 0.1~2.0 -> 0.3~4.0
         
     def _compute_context_vector(self) -> np.ndarray:
         """Compute environmental context vector"""
@@ -368,13 +485,13 @@ class DistributedAgent:
             self.state.position[1] / self.config['map_size'][1],
             self.state.resources / 100.0,
             self.state.health / 100.0,
-            np.random.rand() * 0.8 + 0.3  # 환경적 요소 안정화 (0.3~1.1 범위)
+            np.random.rand() * 1.2 + 0.5  # 환경적 요소 안정화 (0.3~1.1 -> 0.5~1.7)
         ])
         # 최소값 보장을 크게 증가하여 컨텍스트 정보 강화
         # 컨텍스트 차원 안정화 및 NaN 방지
-        enhanced_context = context * 2.0 + 0.1
-        enhanced_context = np.nan_to_num(enhanced_context, nan=0.1, posinf=2.0, neginf=0.1)
-        return np.clip(enhanced_context, 0.1, 2.5)  # 범위 제한 및 안정성 보장
+        enhanced_context = context * 3.5 + 0.3  # 2.0 -> 3.5로 증가
+        enhanced_context = np.nan_to_num(enhanced_context, nan=0.3, posinf=4.0, neginf=0.3)
+        return np.clip(enhanced_context, 0.3, 4.5)  # 범위 확장: 0.1~2.5 -> 0.3~4.5
         
     def communicate(self, target_agent_id: int, message: Dict):
         """Send message to another agent"""
@@ -398,7 +515,7 @@ class DistributedAgent:
         self.communication_buffer.append({
             'sender': sender_id,
             'message': message,
-            'timestamp': ray.get_runtime_context().get_time()
+            'timestamp': time.time()
         })
         
         # Update social connections
@@ -419,4 +536,20 @@ class DistributedAgent:
             "action_history": self.state.action_history,
             "emotion_state": self.state.emotion_state.tolist(),
             "social_connections": self.state.social_connections,
+            "success": getattr(self, 'last_action_success', False),
+            "reward": getattr(self, 'last_action_reward', 0.0),
+            "messages_sent": self.metrics.get('messages_sent', 0),
+            "messages_received": self.metrics.get('messages_received', 0),
+            "bytes_sent": self.metrics.get('bytes_sent', 0),
+            "bytes_received": self.metrics.get('bytes_received', 0),
+            "computation_time": getattr(self, 'last_computation_time', 0.0),
+            "communication_buffer": self.communication_buffer,
+            # 실제 행동 메트릭 추가
+            "successful_actions": self.metrics.get('successful_actions', 0),
+            "total_actions": self.metrics.get('total_actions', 0),
+            "cooperation_events": self.metrics.get('cooperation_events', 0),
+            "competition_events": self.metrics.get('competition_events', 0),
+            "real_computation_times": self.metrics.get('real_computation_times', []),
+            "action_results": self.metrics.get('action_results', []),
+            "cooperation_history": self.metrics.get('cooperation_history', [])
         }

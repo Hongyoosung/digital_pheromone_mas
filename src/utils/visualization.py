@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('Agg')  # GUI 백엔드를 사용하지 않는 비-interactive 백엔드 설정
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
@@ -8,6 +10,7 @@ from matplotlib.animation import FuncAnimation
 import torch
 from pathlib import Path
 import logging
+import os
 
 
 """
@@ -40,37 +43,56 @@ class ExperimentVisualizer:
             timestep: Current timestep
             save: Whether to save the figure
         """
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        dimensions = ['Behavior', 'Emotion', 'Social', 'Context']
-        
-        # 전체적인 통계 정보 계산
-        total_intensity = np.sum(field)
-        max_intensity = np.max(field)
-        active_cells = np.sum(field > 0.01)  # 활성 셀 개수
-        
-        for i, (ax, dim) in enumerate(zip(axes.flat, dimensions)):
-            im = ax.imshow(field[i], cmap='viridis', aspect='auto', vmin=0, vmax=max_intensity)
-            ax.set_title(f'{dim} Dimension (t={timestep})\nMax: {np.max(field[i]):.3f}, Sum: {np.sum(field[i]):.3f}')
-            plt.colorbar(im, ax=ax)
+        plt.ioff()  # Interactive mode 끄기
+        try:
+            fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+            dimensions = ['Behavior', 'Emotion', 'Social', 'Context']
             
-        # 전체 정보를 상단에 표시
-        fig.suptitle(f'Pheromone Field Evolution - Timestep {timestep}\n'
-                    f'Total Intensity: {total_intensity:.3f}, Active Cells: {active_cells}, Max: {max_intensity:.3f}', 
-                    fontsize=14, y=0.98)
-        plt.tight_layout()
-        plt.subplots_adjust(top=0.90)  # 타이틀 공간 확보
-        
-        if save:
-            # 에포크별 개별 저장을 위한 고유 파일명 생성
-            filename = f'pheromone_field_t{timestep:06d}.png'
-            save_path = f'{self.results_dir}/{filename}'
-            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+            # 전체적인 통계 정보 계산
+            total_intensity = np.sum(field)
+            max_intensity = np.max(field)
+            active_cells = np.sum(field > 0.01)  # 활성 셀 개수
             
-            # 최신 파일을 latest로도 저장 (빠른 확인용)
-            latest_path = f'{self.results_dir}/latest_pheromone_field.png'
-            plt.savefig(latest_path, dpi=150, bbox_inches='tight')
+            # 필드가 비어있는 경우 처리
+            if total_intensity == 0 or max_intensity == 0:
+                for i, (ax, dim) in enumerate(zip(axes.flat, dimensions)):
+                    ax.imshow(np.zeros_like(field[i]), cmap='viridis', aspect='auto')
+                    ax.set_title(f'{dim} Dimension (t={timestep})\nMax: 0.000, Sum: 0.000')
+                    ax.text(0.5, 0.5, 'No Pheromone\nDetected', 
+                           ha='center', va='center', transform=ax.transAxes, 
+                           fontsize=12, color='red')
+                
+                fig.suptitle(f'Pheromone Field Evolution - Timestep {timestep}\n'
+                            f'Total Intensity: 0.000, Active Cells: 0, Max: 0.000', 
+                            fontsize=14, y=0.98)
+            else:
+                for i, (ax, dim) in enumerate(zip(axes.flat, dimensions)):
+                    im = ax.imshow(field[i], cmap='viridis', aspect='auto', vmin=0, vmax=max_intensity)
+                    ax.set_title(f'{dim} Dimension (t={timestep})\nMax: {np.max(field[i]):.3f}, Sum: {np.sum(field[i]):.3f}')
+                    plt.colorbar(im, ax=ax)
+                    
+                # 전체 정보를 상단에 표시
+                fig.suptitle(f'Pheromone Field Evolution - Timestep {timestep}\n'
+                            f'Total Intensity: {total_intensity:.3f}, Active Cells: {active_cells}, Max: {max_intensity:.3f}', 
+                            fontsize=14, y=0.98)
             
-        plt.close(fig)
+            plt.tight_layout()
+            plt.subplots_adjust(top=0.90)  # 타이틀 공간 확보
+            
+            if save:
+                # 에포크별 개별 저장을 위한 고유 파일명 생성
+                filename = f'pheromone_field_t{timestep:06d}.png'
+                save_path = f'{self.results_dir}/{filename}'
+                plt.savefig(save_path, dpi=150, bbox_inches='tight')
+                
+                # 최신 파일을 latest로도 저장 (빠른 확인용)
+                latest_path = f'{self.results_dir}/latest_pheromone_field.png'
+                plt.savefig(latest_path, dpi=150, bbox_inches='tight')
+            
+        except Exception as e:
+            logging.error(f"Error in plot_pheromone_field: {e}")
+        finally:
+            plt.close('all')  # 모든 figure 완전 종료
         
     def plot_agent_network(self, positions: np.ndarray, connections: Dict, 
                            pheromone_strengths: Optional[np.ndarray] = None):
@@ -111,7 +133,7 @@ class ExperimentVisualizer:
         plt.title('Agent Communication Network')
         plt.axis('off')
         plt.tight_layout()
-        plt.close()
+        plt.close('all')
         
     def plot_metrics_evolution(self, metrics_history: Dict):
         """
@@ -134,7 +156,7 @@ class ExperimentVisualizer:
             ax.grid(True, alpha=0.3)
             
         plt.tight_layout()
-        plt.close()
+        plt.close('all')
         
     def create_heatmap(self, data: np.ndarray, title: str, 
                        x_labels: Optional[List] = None, 
@@ -153,7 +175,7 @@ class ExperimentVisualizer:
                     xticklabels=x_labels, yticklabels=y_labels)
         plt.title(title)
         plt.tight_layout()
-        plt.close()
+        plt.close('all')
         
     def plot_convergence_comparison(self, results: Dict[str, List[float]]):
         """
@@ -174,7 +196,7 @@ class ExperimentVisualizer:
         plt.yscale('log')
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.close()
+        plt.close('all')
         
     def _prepare_plot_data(self, metric_name, values):
         """Helper function to convert metric data into a plottable DataFrame."""
@@ -243,6 +265,7 @@ class ExperimentVisualizer:
             save (bool): 그림을 파일로 저장할지 여부.
             show (bool): 그림을 화면에 표시할지 여부.
         """
+        plt.ioff()  # Interactive mode 끄기
         if not metrics_history or all(not v for v in metrics_history.values()):
             logging.warning("metrics_history is empty or contains no data. Skipping plot generation.")
             return
@@ -253,14 +276,44 @@ class ExperimentVisualizer:
             logging.info(f"Metric '{metric_name}': {len(values)} values, sample: {values[:3] if values else 'empty'}")
 
         plt.style.use(self.style)
-        num_metrics = len(metrics_history.keys())
         
-        fig, axes = plt.subplots(num_metrics, 1, figsize=(12, 5 * num_metrics), sharex=True)
+        # 중요 메트릭들을 우선적으로 표시
+        important_metrics = [
+            'pheromone_concentration_max', 'pheromone_concentration_mean', 'active_cells',
+            'shannon_entropy', 'total_reward', 'success_rate', 'training_loss',
+            'pheromone_decay_rate', 'pheromone_deposit_rate', 'pheromone_evaporation_rate',
+            'total_loss', 'diffusion_loss', 'attention_loss', 'consistency_loss',
+            'learning_rate_attention', 'learning_rate_diffusion'
+        ]
+        
+        # 중요 메트릭이 있는지 확인하고 필터링
+        available_metrics = {k: v for k, v in metrics_history.items() if v}
+        if not available_metrics:
+            logging.warning("No available metrics to plot.")
+            return
+            
+        # 중요 메트릭을 우선적으로 선택
+        selected_metrics = {}
+        for metric in important_metrics:
+            if metric in available_metrics:
+                selected_metrics[metric] = available_metrics[metric]
+        
+        # 나머지 메트릭도 추가 (최대 20개까지)
+        for metric, values in available_metrics.items():
+            if metric not in selected_metrics and len(selected_metrics) < 20:
+                selected_metrics[metric] = values
+        
+        num_metrics = len(selected_metrics)
+        if num_metrics == 0:
+            logging.warning("No metrics selected for plotting.")
+            return
+        
+        fig, axes = plt.subplots(num_metrics, 1, figsize=(12, 4 * num_metrics), sharex=True)
         if num_metrics == 1:
             axes = [axes]
         fig.suptitle(f'Training Progress at Step {current_step}', fontsize=16)
 
-        for i, (metric, values) in enumerate(metrics_history.items()):
+        for i, (metric, values) in enumerate(selected_metrics.items()):
             ax = axes[i]
             
             if not values:
@@ -274,28 +327,54 @@ class ExperimentVisualizer:
                 continue
 
             # 'sub_metric' 열이 존재하고 고유 값이 2개 이상인 경우에만 hue를 사용
-            if 'sub_metric' in df.columns and df['sub_metric'].nunique() > 1:
-                sns.lineplot(data=df, x='step', y='value', hue='sub_metric', ax=ax)
-                ax.set_title(f'{metric} Details')
-                ax.legend(title='Sub-metric')
-            else:
-                sns.lineplot(data=df, x='step', y='value', ax=ax)
-                ax.set_title(metric)
+            try:
+                if 'sub_metric' in df.columns and df['sub_metric'].nunique() > 1:
+                    # 데이터가 충분한지 확인
+                    if len(df) > 0 and df['step'].nunique() > 0:
+                        sns.lineplot(data=df, x='step', y='value', hue='sub_metric', ax=ax)
+                        ax.set_title(f'{metric} Details')
+                        # 범례가 있는 라벨이 있을 때만 범례 표시
+                        handles, labels = ax.get_legend_handles_labels()
+                        if handles:
+                            ax.legend(title='Sub-metric')
+                    else:
+                        ax.text(0.5, 0.5, 'Insufficient data', ha='center', va='center', transform=ax.transAxes)
+                        ax.set_title(f'{metric} (No data)')
+                else:
+                    # 데이터가 충분한지 확인
+                    if len(df) > 0 and df['step'].nunique() > 0:
+                        sns.lineplot(data=df, x='step', y='value', ax=ax)
+                        ax.set_title(metric)
+                    else:
+                        ax.text(0.5, 0.5, 'Insufficient data', ha='center', va='center', transform=ax.transAxes)
+                        ax.set_title(f'{metric} (No data)')
+            except Exception as e:
+                logging.warning(f"Error plotting metric '{metric}': {e}")
+                ax.text(0.5, 0.5, f'Plot error: {str(e)[:50]}...', ha='center', va='center', transform=ax.transAxes)
+                ax.set_title(f'{metric} (Plot Error)')
 
             ax.set_xlabel('Time Step')
             ax.set_ylabel('Value')
+            
+            # 페로몬 관련 메트릭에 대한 특별한 처리
+            if 'pheromone' in metric.lower():
+                ax.set_facecolor('#f0f8ff')  # 연한 파란색 배경
+                ax.grid(True, alpha=0.3)
 
         plt.tight_layout(rect=[0, 0.03, 1, 0.96])
 
-        if save:
-            save_path = self.results_dir / f'training_progress_step_{current_step}.png'
-            plt.savefig(save_path, dpi=300)
-            logging.info(f"Saved training progress plot to {save_path}")
-        
-        if show:
-            plt.show()
-        
-        plt.close(fig)
+        try:
+            if save:
+                save_path = self.results_dir / f'training_progress_step_{current_step}.png'
+                plt.savefig(save_path, dpi=300)
+                logging.info(f"Saved training progress plot to {save_path}")
+            
+            if show:
+                plt.show()
+        except Exception as e:
+            logging.error(f"Error saving/showing training progress plot: {e}")
+        finally:
+            plt.close('all')  # 모든 figure 완전 종료
         
     def create_memory_usage_plot(self, memory_history: List[Dict], timestep: int, save: bool = True):
         """
@@ -335,12 +414,15 @@ class ExperimentVisualizer:
         
         plt.tight_layout()
         
-        if save:
-            filename = f'memory_usage_t{timestep:06d}.png'
-            save_path = f'{self.results_dir}/{filename}'
-            plt.savefig(save_path, dpi=150, bbox_inches='tight')
-            
-        plt.close(fig)
+        try:
+            if save:
+                filename = f'memory_usage_t{timestep:06d}.png'
+                save_path = f'{self.results_dir}/{filename}'
+                plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        except Exception as e:
+            logging.error(f"Error saving memory usage plot: {e}")
+        finally:
+            plt.close('all')
         
     def plot_agent_states(self, agent_states: List[Dict], timestep: int, save: bool = True):
         """
@@ -409,16 +491,19 @@ class ExperimentVisualizer:
         
         plt.tight_layout()
         
-        if save:
-            filename = f'agent_states_t{timestep:06d}.png'
-            save_path = f'{self.results_dir}/{filename}'
-            plt.savefig(save_path, dpi=150, bbox_inches='tight')
-            
-            # Latest states도 저장
-            latest_path = f'{self.results_dir}/latest_agent_states.png'
-            plt.savefig(latest_path, dpi=150, bbox_inches='tight')
-            
-        plt.close(fig)
+        try:
+            if save:
+                filename = f'agent_states_t{timestep:06d}.png'
+                save_path = f'{self.results_dir}/{filename}'
+                plt.savefig(save_path, dpi=150, bbox_inches='tight')
+                
+                # Latest states도 저장
+                latest_path = f'{self.results_dir}/latest_agent_states.png'
+                plt.savefig(latest_path, dpi=150, bbox_inches='tight')
+        except Exception as e:
+            logging.error(f"Error saving agent states plot: {e}")
+        finally:
+            plt.close('all')
         
     def plot_social_network(self, social_connections: Dict, agent_positions: np.ndarray, 
                            timestep: int, save: bool = True):
@@ -466,9 +551,276 @@ class ExperimentVisualizer:
                  f'Green=Positive, Red=Negative, Width=Strength')
         plt.axis('off')
         
-        if save:
-            filename = f'social_network_t{timestep:06d}.png'
-            save_path = f'{self.results_dir}/{filename}'
-            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        try:
+            if save:
+                filename = f'social_network_t{timestep:06d}.png'
+                save_path = f'{self.results_dir}/{filename}'
+                plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        except Exception as e:
+            logging.error(f"Error saving social network plot: {e}")
+        finally:
+            plt.close('all')
+
+    def create_learning_monitoring_plots(self, learning_history: Dict, timestep: int, save: bool = True):
+        """학습 모니터링을 위한 시각화를 생성합니다."""
+        if not learning_history.get('total_loss'):
+            return
+        
+        fig, axes = plt.subplots(3, 2, figsize=(15, 18))
+        fig.suptitle(f'Learning Monitoring - Timestep {timestep}', fontsize=16)
+        
+        # 1. 손실 추이 (안전장치 추가)
+        steps = learning_history.get('training_steps', [])
+        if steps and len(steps) > 0:
+            if 'total_loss' in learning_history and len(learning_history['total_loss']) == len(steps):
+                axes[0, 0].plot(steps, learning_history['total_loss'], 
+                               label='Total Loss', color='blue', linewidth=2)
+            if 'attention_loss' in learning_history and len(learning_history['attention_loss']) == len(steps):
+                axes[0, 0].plot(steps, learning_history['attention_loss'], 
+                               label='Attention Loss', color='red', alpha=0.7)
+            if 'diffusion_loss' in learning_history and len(learning_history['diffusion_loss']) == len(steps):
+                axes[0, 0].plot(steps, learning_history['diffusion_loss'], 
+                               label='Diffusion Loss', color='green', alpha=0.7)
+            if 'consistency_loss' in learning_history and len(learning_history['consistency_loss']) == len(steps):
+                axes[0, 0].plot(steps, learning_history['consistency_loss'], 
+                               label='Consistency Loss', color='orange', alpha=0.7)
+        else:
+            axes[0, 0].text(0.5, 0.5, 'No training data available', 
+                           ha='center', va='center', transform=axes[0, 0].transAxes)
+        axes[0, 0].set_title('Training Losses Over Time')
+        axes[0, 0].set_xlabel('Timestep')
+        axes[0, 0].set_ylabel('Loss')
+        # 범례가 있는 라벨이 있을 때만 범례 표시
+        handles, labels = axes[0, 0].get_legend_handles_labels()
+        if handles:
+            axes[0, 0].legend()
+        axes[0, 0].grid(True, alpha=0.3)
+        
+        # 2. 학습률 추이 (개선된 안전장치)
+        lr_attention = learning_history.get('learning_rate_attention', [])
+        lr_diffusion = learning_history.get('learning_rate_diffusion', [])
+        
+        if (lr_attention or lr_diffusion) and steps:
+            if lr_attention and len(lr_attention) > 0:
+                lr_steps = steps[:len(lr_attention)]
+                if len(lr_steps) == len(lr_attention):
+                    axes[0, 1].plot(lr_steps, lr_attention, 
+                                   label='Attention LR', color='red', linewidth=2)
+            if lr_diffusion and len(lr_diffusion) > 0:
+                lr_steps = steps[:len(lr_diffusion)]
+                if len(lr_steps) == len(lr_diffusion):
+                    axes[0, 1].plot(lr_steps, lr_diffusion, 
+                                   label='Diffusion LR', color='green', linewidth=2)
+        else:
+            axes[0, 1].text(0.5, 0.5, 'No learning rate data', 
+                           ha='center', va='center', transform=axes[0, 1].transAxes)
+        axes[0, 1].set_title('Learning Rates Over Time')
+        axes[0, 1].set_xlabel('Timestep')
+        axes[0, 1].set_ylabel('Learning Rate')
+        # 범례가 있는 라벨이 있을 때만 범례 표시
+        handles, labels = axes[0, 1].get_legend_handles_labels()
+        if handles:
+            axes[0, 1].legend()
+        axes[0, 1].grid(True, alpha=0.3)
+        
+        # 3. 수렴 메트릭 (안전장치 추가)
+        conv_metrics = learning_history.get('convergence_metrics', [])
+        if conv_metrics and len(conv_metrics) > 0:
+            try:
+                timesteps = [m['timestep'] for m in conv_metrics if 'timestep' in m]
+                improvements = [m['loss_improvement'] for m in conv_metrics if 'loss_improvement' in m]
+                relative_improvements = [m['relative_improvement'] for m in conv_metrics if 'relative_improvement' in m]
+                
+                if len(timesteps) == len(improvements) and len(timesteps) > 0:
+                    axes[1, 0].plot(timesteps, improvements, label='Loss Improvement', color='purple', linewidth=2)
+                    axes[1, 0].axhline(y=0, color='black', linestyle='--', alpha=0.5)
+                else:
+                    axes[1, 0].text(0.5, 0.5, 'Inconsistent improvement data', 
+                                   ha='center', va='center', transform=axes[1, 0].transAxes)
+                
+                if len(timesteps) == len(relative_improvements) and len(timesteps) > 0:
+                    axes[1, 1].plot(timesteps, relative_improvements, label='Relative Improvement', color='orange', linewidth=2)
+                    axes[1, 1].axhline(y=0, color='black', linestyle='--', alpha=0.5)
+                else:
+                    axes[1, 1].text(0.5, 0.5, 'Inconsistent relative improvement data', 
+                                   ha='center', va='center', transform=axes[1, 1].transAxes)
+            except Exception as e:
+                logging.error(f"Error processing convergence metrics: {e}")
+                axes[1, 0].text(0.5, 0.5, 'Error processing convergence data', 
+                               ha='center', va='center', transform=axes[1, 0].transAxes)
+                axes[1, 1].text(0.5, 0.5, 'Error processing convergence data', 
+                               ha='center', va='center', transform=axes[1, 1].transAxes)
+        else:
+            axes[1, 0].text(0.5, 0.5, 'No convergence data', 
+                           ha='center', va='center', transform=axes[1, 0].transAxes)
+            axes[1, 1].text(0.5, 0.5, 'No convergence data', 
+                           ha='center', va='center', transform=axes[1, 1].transAxes)
             
-        plt.close()
+        axes[1, 0].set_title('Loss Improvement Over Time')
+        axes[1, 0].set_xlabel('Timestep')
+        axes[1, 0].set_ylabel('Loss Improvement')
+        # 범례가 있는 라벨이 있을 때만 범례 표시
+        handles, labels = axes[1, 0].get_legend_handles_labels()
+        if handles:
+            axes[1, 0].legend()
+        axes[1, 0].grid(True, alpha=0.3)
+        
+        axes[1, 1].set_title('Relative Loss Improvement')
+        axes[1, 1].set_xlabel('Timestep')
+        axes[1, 1].set_ylabel('Relative Improvement')
+        # 범례가 있는 라벨이 있을 때만 범례 표시
+        handles, labels = axes[1, 1].get_legend_handles_labels()
+        if handles:
+            axes[1, 1].legend()
+        axes[1, 1].grid(True, alpha=0.3)
+        
+        # 4. 페로몬 관련 메트릭 (안전장치 추가)
+        if 'pheromone_decay_rate' in learning_history and len(learning_history['pheromone_decay_rate']) > 0 and steps:
+            decay_data = learning_history['pheromone_decay_rate']
+            decay_steps = steps[:len(decay_data)]
+            if len(decay_steps) == len(decay_data):
+                axes[2, 0].plot(decay_steps, decay_data, 
+                               label='Decay Rate', color='brown', linewidth=2)
+            else:
+                axes[2, 0].text(0.5, 0.5, 'Inconsistent decay rate data', 
+                               ha='center', va='center', transform=axes[2, 0].transAxes)
+        else:
+            axes[2, 0].text(0.5, 0.5, 'No decay rate data', 
+                           ha='center', va='center', transform=axes[2, 0].transAxes)
+        axes[2, 0].set_title('Pheromone Decay Rate Over Time')
+        axes[2, 0].set_xlabel('Timestep')
+        axes[2, 0].set_ylabel('Decay Rate')
+        # 범례가 있는 라벨이 있을 때만 범례 표시
+        handles, labels = axes[2, 0].get_legend_handles_labels()
+        if handles:
+            axes[2, 0].legend()
+        axes[2, 0].grid(True, alpha=0.3)
+        
+        if 'pheromone_deposit_rate' in learning_history and len(learning_history['pheromone_deposit_rate']) > 0 and steps:
+            deposit_data = learning_history['pheromone_deposit_rate']
+            deposit_steps = steps[:len(deposit_data)]
+            if len(deposit_steps) == len(deposit_data):
+                axes[2, 1].plot(deposit_steps, deposit_data, 
+                               label='Deposit Rate', color='cyan', linewidth=2)
+            else:
+                axes[2, 1].text(0.5, 0.5, 'Inconsistent deposit rate data', 
+                               ha='center', va='center', transform=axes[2, 1].transAxes)
+        else:
+            axes[2, 1].text(0.5, 0.5, 'No deposit rate data', 
+                           ha='center', va='center', transform=axes[2, 1].transAxes)
+        axes[2, 1].set_title('Pheromone Deposit Rate Over Time')
+        axes[2, 1].set_xlabel('Timestep')
+        axes[2, 1].set_ylabel('Deposit Rate')
+        # 범례가 있는 라벨이 있을 때만 범례 표시
+        handles, labels = axes[2, 1].get_legend_handles_labels()
+        if handles:
+            axes[2, 1].legend()
+        axes[2, 1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        try:
+            if save:
+                filename = f'learning_monitoring_t{timestep:06d}.png'
+                filepath = os.path.join(self.results_dir, filename)
+                plt.savefig(filepath, dpi=300, bbox_inches='tight')
+                print(f"Learning monitoring plot saved: {filepath}")
+            else:
+                plt.show()
+        except Exception as e:
+            logging.error(f"Error in learning monitoring plot: {e}")
+        finally:
+            plt.close('all')
+    
+    def create_communication_analysis_plot(self, communication_data: List[Dict], timestep: int, save: bool = True):
+        """통신 분석을 위한 시각화를 생성합니다."""
+        if not communication_data:
+            return
+        
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        fig.suptitle(f'Communication Analysis - Timestep {timestep}', fontsize=16)
+        
+        # 메시지 수 추이 (안전장치 추가)
+        timesteps = list(range(len(communication_data)))
+        message_counts = [d.get('total_messages', 0) for d in communication_data]
+        byte_counts = [d.get('total_bytes', 0) for d in communication_data]
+        
+        if len(timesteps) == len(message_counts) and len(timesteps) > 0:
+            axes[0, 0].plot(timesteps, message_counts, label='Total Messages', color='blue', linewidth=2)
+        else:
+            axes[0, 0].text(0.5, 0.5, 'No message count data', 
+                           ha='center', va='center', transform=axes[0, 0].transAxes)
+        axes[0, 0].set_title('Message Count Over Time')
+        axes[0, 0].set_xlabel('Communication Round')
+        axes[0, 0].set_ylabel('Message Count')
+        # 범례가 있는 라벨이 있을 때만 범례 표시
+        handles, labels = axes[0, 0].get_legend_handles_labels()
+        if handles:
+            axes[0, 0].legend()
+        axes[0, 0].grid(True, alpha=0.3)
+        
+        # 데이터 크기 추이
+        if len(timesteps) == len(byte_counts) and len(timesteps) > 0:
+            axes[0, 1].plot(timesteps, byte_counts, label='Total Bytes', color='green', linewidth=2)
+        else:
+            axes[0, 1].text(0.5, 0.5, 'No byte count data', 
+                           ha='center', va='center', transform=axes[0, 1].transAxes)
+        axes[0, 1].set_title('Data Transfer Over Time')
+        axes[0, 1].set_xlabel('Communication Round')
+        axes[0, 1].set_ylabel('Bytes Transferred')
+        # 범례가 있는 라벨이 있을 때만 범례 표시
+        handles, labels = axes[0, 1].get_legend_handles_labels()
+        if handles:
+            axes[0, 1].legend()
+        axes[0, 1].grid(True, alpha=0.3)
+        
+        # 메시지당 평균 크기
+        if len(timesteps) > 0 and len(message_counts) == len(byte_counts):
+            avg_sizes = [b/m if m > 0 else 0 for b, m in zip(byte_counts, message_counts)]
+            if len(timesteps) == len(avg_sizes):
+                axes[1, 0].plot(timesteps, avg_sizes, label='Avg Message Size', color='red', linewidth=2)
+            else:
+                axes[1, 0].text(0.5, 0.5, 'Inconsistent average size data', 
+                               ha='center', va='center', transform=axes[1, 0].transAxes)
+        else:
+            axes[1, 0].text(0.5, 0.5, 'No average size data', 
+                           ha='center', va='center', transform=axes[1, 0].transAxes)
+        axes[1, 0].set_title('Average Message Size')
+        axes[1, 0].set_xlabel('Communication Round')
+        axes[1, 0].set_ylabel('Bytes per Message')
+        # 범례가 있는 라벨이 있을 때만 범례 표시
+        handles, labels = axes[1, 0].get_legend_handles_labels()
+        if handles:
+            axes[1, 0].legend()
+        axes[1, 0].grid(True, alpha=0.3)
+        
+        # 통신 효율성 (메시지 수 대비 성공률)
+        success_rates = [d.get('success_rate', 0) for d in communication_data]
+        if len(timesteps) == len(success_rates) and len(timesteps) > 0:
+            axes[1, 1].plot(timesteps, success_rates, label='Success Rate', color='purple', linewidth=2)
+        else:
+            axes[1, 1].text(0.5, 0.5, 'No success rate data', 
+                           ha='center', va='center', transform=axes[1, 1].transAxes)
+        axes[1, 1].set_title('Communication Success Rate')
+        axes[1, 1].set_xlabel('Communication Round')
+        axes[1, 1].set_ylabel('Success Rate')
+        # 범례가 있는 라벨이 있을 때만 범례 표시
+        handles, labels = axes[1, 1].get_legend_handles_labels()
+        if handles:
+            axes[1, 1].legend()
+        axes[1, 1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        try:
+            if save:
+                filename = f'communication_analysis_t{timestep:06d}.png'
+                filepath = os.path.join(self.results_dir, filename)
+                plt.savefig(filepath, dpi=300, bbox_inches='tight')
+                print(f"Communication analysis plot saved: {filepath}")
+            else:
+                plt.show()
+        except Exception as e:
+            logging.error(f"Error in communication analysis plot: {e}")
+        finally:
+            plt.close('all')

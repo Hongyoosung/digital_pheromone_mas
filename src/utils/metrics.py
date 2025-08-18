@@ -84,29 +84,44 @@ class MetricsTracker:
                 
         return len(loss_values)
         
-    def track_communication_overhead(self, messages: List[Dict]) -> Dict:
+    def track_communication_overhead(self, messages: List[Dict], communication_metrics: Dict = None) -> Dict:
         """
         Track communication overhead metrics
         
         Args:
             messages: List of message dictionaries
+            communication_metrics: Additional communication metrics
             
         Returns:
             Communication overhead statistics
         """
         if not messages:
-            return {'total_messages': 0, 'total_bytes': 0, 'avg_size': 0}
+            return {'total_messages': 0, 'total_bytes': 0, 'avg_size': 0, 'bandwidth_usage': 0}
             
         total_messages = len(messages)
         total_bytes = sum(msg.get('size', 0) for msg in messages)
         avg_size = total_bytes / total_messages if total_messages > 0 else 0
         
-        return {
+        result = {
             'total_messages': total_messages,
             'total_bytes': total_bytes,
             'avg_size': avg_size,
             'messages_per_second': total_messages / (time.time() - self.start_time)
         }
+        
+        # 추가 통신 메트릭 병합
+        if communication_metrics:
+            result.update(communication_metrics)
+            
+        # 통신 성공률 계산 추가
+        if communication_metrics:
+            # 성공적으로 전송된 메시지 비율
+            failed_messages = sum(1 for msg in messages if msg.get('status') == 'failed')
+            total_attempted = len(messages)
+            success_rate = (total_attempted - failed_messages) / total_attempted if total_attempted > 0 else 0.0
+            result['success_rate'] = success_rate
+        
+        return result
         
     def track_network_load(self, agent_metrics: List[Dict]) -> Dict:
         """
@@ -121,17 +136,89 @@ class MetricsTracker:
         if not agent_metrics:
             return {}
             
+        # 실제 데이터 기반 계산
         total_sent = sum(m.get('bytes_sent', 0) for m in agent_metrics)
         total_received = sum(m.get('bytes_received', 0) for m in agent_metrics)
-        total_computation = sum(m.get('computation_time', 0) for m in agent_metrics)
+        
+        # 실제 연산 시간 사용 - 마이크로초 단위로 정밀도 개선
+        real_computation_times = []
+        for m in agent_metrics:
+            if 'real_computation_times' in m and m['real_computation_times']:
+                real_computation_times.extend(m['real_computation_times'])
+        
+        total_computation = sum(real_computation_times) if real_computation_times else 0
+        # 마이크로초 단위로 변환하여 정밀도 향상
+        avg_computation_ms = (total_computation / len(real_computation_times) * 1000) if real_computation_times else 0
+        avg_computation_us = avg_computation_ms * 1000  # 마이크로초 단위
         
         elapsed_time = time.time() - self.start_time
+        bandwidth_bps = (total_sent + total_received) / max(elapsed_time, 1)
+        bandwidth_mbps = bandwidth_bps / (1024 * 1024)  # Convert to Mbps
+        
+        # 최대 대역폭 계산 개선 - 순간 대역폭 추적
+        current_time = time.time()
+        
+        # 타임스텝별 대역폭 계산
+        if not hasattr(self, '_bandwidth_history'):
+            self._bandwidth_history = []
+            self._last_measurement_time = current_time
+            self._last_total_bytes = 0
+        
+        current_total_bytes = total_sent + total_received
+        time_delta = current_time - self._last_measurement_time
+        
+        if time_delta > 0:
+            # 순간 대역폭 계산 (이전 측정 이후의 증분)
+            bytes_delta = current_total_bytes - self._last_total_bytes
+            instantaneous_bps = bytes_delta / time_delta
+            instantaneous_mbps = instantaneous_bps / (1024 * 1024)
+            
+            # 히스토리에 추가 (최근 10개 측정값만 유지)
+            self._bandwidth_history.append((current_time, instantaneous_mbps))
+            if len(self._bandwidth_history) > 10:
+                self._bandwidth_history = self._bandwidth_history[-10:]
+            
+            # 피크 대역폭 계산
+            peak_bandwidth = max(bw for _, bw in self._bandwidth_history) if self._bandwidth_history else 0
+            
+            # 업데이트
+            self._last_measurement_time = current_time
+            self._last_total_bytes = current_total_bytes
+        else:
+            peak_bandwidth = 0
+        
+        # 부하 균형 비율 개선 - 에이전트별 작업 분산도 측정
+        if len(real_computation_times) > 1:
+            # 표준편차를 평균으로 나누어 정규화된 분산도 계산
+            mean_time = np.mean(real_computation_times)
+            std_time = np.std(real_computation_times)
+            load_balance_ratio = std_time / mean_time if mean_time > 0 else 0.0
+            
+            # 추가: 에이전트별 작업 분배 균등성 측정
+            agent_workloads = []
+            for m in agent_metrics:
+                agent_total_time = sum(m.get('real_computation_times', []))
+                agent_workloads.append(agent_total_time)
+            
+            if len(agent_workloads) > 1:
+                workload_balance = np.std(agent_workloads) / max(np.mean(agent_workloads), 1e-8)
+            else:
+                workload_balance = 0.0
+        else:
+            load_balance_ratio = 0.0
+            workload_balance = 0.0
         
         return {
-            'bandwidth_usage': (total_sent + total_received) / elapsed_time,
-            'avg_computation_time': total_computation / len(agent_metrics),
+            'bandwidth_usage': bandwidth_bps,
+            'bandwidth_mbps': bandwidth_mbps,
+            'peak_bandwidth': peak_bandwidth,
+            'avg_computation_time_ms': avg_computation_ms,  # 밀리초 단위
+            'avg_computation_time_us': avg_computation_us,   # 마이크로초 단위
             'total_data_transferred': total_sent + total_received,
-            'load_balance_ratio': np.std([m.get('computation_time', 0) for m in agent_metrics])
+            'load_balance_ratio': load_balance_ratio,
+            'workload_balance_ratio': workload_balance,
+            'real_computation_samples': len(real_computation_times),
+            'instantaneous_bandwidth_mbps': instantaneous_mbps if 'instantaneous_mbps' in locals() else 0
         }
         
     def track_gpu_metrics(self) -> Dict:
@@ -163,8 +250,53 @@ class MetricsTracker:
         """Update metrics with new values"""
         for key, value in kwargs.items():
             if key in self.metrics_history:
-                self.metrics_history[key].append(value)
-                
+                if isinstance(value, (list, tuple)):
+                    self.metrics_history[key].extend(value)
+                else:
+                    self.metrics_history[key].append(value)
+            else:
+                # 새로운 메트릭 추가
+                if isinstance(value, (list, tuple)):
+                    self.metrics_history[key] = list(value)
+                else:
+                    self.metrics_history[key] = [value]
+    
+    def compute_pheromone_metrics(self, pheromone_field: np.ndarray) -> Dict:
+        """페로몬 필드 관련 메트릭 계산"""
+        if pheromone_field.size == 0:
+            return {
+                'pheromone_concentration_max': 0.0,
+                'pheromone_concentration_mean': 0.0,
+                'pheromone_concentration_std': 0.0,
+                'active_cells': 0,
+                'total_intensity': 0.0,
+                'pheromone_diversity': 0.0
+            }
+        
+        # 기본 통계
+        max_concentration = np.max(pheromone_field)
+        mean_concentration = np.mean(pheromone_field)
+        std_concentration = np.std(pheromone_field)
+        
+        # 활성 셀 수 (임계값 이상)
+        active_cells = np.sum(pheromone_field > 0.01)
+        
+        # 총 강도
+        total_intensity = np.sum(pheromone_field)
+        
+        # 페로몬 다양성 (비제로 값들의 표준편차)
+        non_zero_values = pheromone_field[pheromone_field > 0.01]
+        diversity = np.std(non_zero_values) if len(non_zero_values) > 0 else 0.0
+        
+        return {
+            'pheromone_concentration_max': float(max_concentration),
+            'pheromone_concentration_mean': float(mean_concentration),
+            'pheromone_concentration_std': float(std_concentration),
+            'active_cells': int(active_cells),
+            'total_intensity': float(total_intensity),
+            'pheromone_diversity': float(diversity)
+        }
+        
     def get_summary(self) -> Dict:
         """Get summary statistics of all metrics"""
         summary = {}
@@ -304,6 +436,99 @@ class MetricsTracker:
                 entropies.append(row_entropy)
                 
         return np.mean(entropies) if entropies else 0.0
+        
+    def compute_loss_improvement_metrics(self, current_loss: float, previous_losses: List[float]) -> Dict:
+        """
+        손실 개선 메트릭 계산
+        
+        Args:
+            current_loss: 현재 손실값
+            previous_losses: 이전 손실값들
+            
+        Returns:
+            손실 개선 메트릭 딕셔너리
+        """
+        if not previous_losses or len(previous_losses) == 0:
+            return {
+                'loss_improvement': 0.0,
+                'relative_improvement': 0.0,
+                'improvement_rate': 0.0
+            }
+            
+        recent_loss = previous_losses[-1] if previous_losses else current_loss
+        
+        # 절대적 개선
+        loss_improvement = recent_loss - current_loss
+        
+        # 상대적 개선 (백분율)
+        relative_improvement = (loss_improvement / max(abs(recent_loss), 1e-8)) * 100
+        
+        # 개선률 (최근 5개 스텝 평균 대비)
+        if len(previous_losses) >= 5:
+            recent_avg = np.mean(previous_losses[-5:])
+            improvement_rate = (recent_avg - current_loss) / max(abs(recent_avg), 1e-8)
+        else:
+            improvement_rate = relative_improvement / 100
+            
+        return {
+            'loss_improvement': float(loss_improvement),
+            'relative_improvement': float(relative_improvement),
+            'improvement_rate': float(improvement_rate)
+        }
+        
+    def compute_pheromone_dynamics_metrics(self, current_field: np.ndarray, previous_field: np.ndarray = None) -> Dict:
+        """
+        페로몬 동역학 메트릭 계산 (감쇠율, 증착율 등)
+        
+        Args:
+            current_field: 현재 페로몬 필드
+            previous_field: 이전 페로몬 필드
+            
+        Returns:
+            페로몬 동역학 메트릭 딕셔너리
+        """
+        metrics = {
+            'pheromone_decay_rate': 0.0,
+            'pheromone_deposit_rate': 0.0,
+            'pheromone_evaporation_rate': 0.0,
+            'diffusion_rate': 0.0
+        }
+        
+        if previous_field is None or current_field.size == 0 or previous_field.size == 0:
+            return metrics
+            
+        try:
+            # 전체 농도 변화
+            current_total = np.sum(current_field)
+            previous_total = np.sum(previous_field)
+            
+            # 감쇠율 계산 (전체 농도 감소율)
+            if previous_total > 0:
+                decay_rate = (previous_total - current_total) / previous_total
+                metrics['pheromone_decay_rate'] = max(0.0, float(decay_rate))
+                
+                # 증발률 (자연적 감소)
+                evaporation_rate = decay_rate * 0.7  # 전체 감소의 70%를 증발로 가정
+                metrics['pheromone_evaporation_rate'] = max(0.0, float(evaporation_rate))
+            
+            # 새로운 증착 감지 (농도가 증가한 영역)
+            field_diff = current_field - previous_field
+            deposit_areas = field_diff > 0
+            if np.any(deposit_areas):
+                deposit_amount = np.sum(field_diff[deposit_areas])
+                metrics['pheromone_deposit_rate'] = float(deposit_amount)
+            
+            # 확산률 계산 (공간적 분산 변화)
+            current_var = np.var(current_field)
+            previous_var = np.var(previous_field)
+            if previous_var > 0:
+                diffusion_rate = (current_var - previous_var) / previous_var
+                metrics['diffusion_rate'] = float(diffusion_rate)
+                
+        except Exception as e:
+            logging.warning(f"페로몬 동역학 메트릭 계산 오류: {e}")
+            
+        return metrics
         
     def compute_pheromone_diffusion_rate(self, field_before: np.ndarray, field_after: np.ndarray) -> float:
         """
