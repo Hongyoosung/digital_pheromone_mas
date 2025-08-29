@@ -3,6 +3,14 @@ import torch
 from typing import List, Dict, Tuple
 from scipy.stats import entropy
 import time
+import ray
+import psutil
+import json
+import logging
+import subprocess
+import sys
+
+logger = logging.getLogger(__name__)
 
 
 """
@@ -15,6 +23,13 @@ class MetricsTracker:
     
     def __init__(self):
         self.reset()
+        self.ray_stats_history = []
+        self.last_ray_stats = None
+        self.process_stats = {
+            'network_io': {'bytes_sent': 0, 'bytes_recv': 0},
+            'cpu_percent': [],
+            'memory_percent': []
+        }
         
     def reset(self):
         """Reset all metrics"""
@@ -38,6 +53,10 @@ class MetricsTracker:
             'environmental_adaptation_score': []
         }
         self.start_time = time.time()
+        # ray_stats_history를 reset에서도 재초기화
+        self.ray_stats_history = []
+        self.last_ray_stats = None
+        self._init_ray_monitoring()
         
     def compute_shannon_entropy(self, pheromone_field: np.ndarray) -> float:
         """
@@ -56,11 +75,33 @@ class MetricsTracker:
         if len(flat_field) == 0:
             return 0.0
             
-        # Normalize to probability distribution
-        prob_dist = flat_field / np.sum(flat_field)
+        # Check for nearly identical values to prevent scipy warning
+        if len(flat_field) > 1:
+            field_std = np.std(flat_field)
+            field_mean = np.mean(flat_field)
+            if field_std / (field_mean + 1e-12) < 1e-10:  # Nearly identical values
+                # Add small random noise to prevent catastrophic cancellation
+                noise = np.random.normal(0, field_mean * 1e-10, len(flat_field))
+                flat_field = flat_field + noise
+            
+        # Normalize to probability distribution with numerical stability
+        total_sum = np.sum(flat_field)
+        if total_sum < 1e-12:
+            return 0.0
+            
+        prob_dist = flat_field / total_sum
         
-        # Compute entropy
-        return entropy(prob_dist, base=2)
+        # Ensure probability distribution sums to 1 and has no zeros
+        prob_dist = np.clip(prob_dist, 1e-12, 1.0)
+        prob_dist = prob_dist / np.sum(prob_dist)  # Renormalize
+        
+        # Compute entropy with error handling
+        try:
+            return entropy(prob_dist, base=2)
+        except (RuntimeWarning, ValueError) as e:
+            logger.warning(f"Entropy calculation warning: {e}")
+            # Fallback to manual calculation
+            return -np.sum(prob_dist * np.log2(prob_dist + 1e-12))
         
     def track_convergence(self, loss_values: List[float]) -> float:
         """
@@ -108,6 +149,10 @@ class MetricsTracker:
             'avg_size': avg_size,
             'messages_per_second': total_messages / (time.time() - self.start_time)
         }
+        
+        # Ray 클러스터 통신 메트릭 추가
+        ray_metrics = self.update_ray_metrics()
+        result.update(ray_metrics)
         
         # 추가 통신 메트릭 병합
         if communication_metrics:
@@ -208,7 +253,10 @@ class MetricsTracker:
             load_balance_ratio = 0.0
             workload_balance = 0.0
         
-        return {
+        # Ray 클러스터 네트워크 부하 메트릭 추가
+        ray_network_metrics = self.update_ray_metrics()
+        
+        base_metrics = {
             'bandwidth_usage': bandwidth_bps,
             'bandwidth_mbps': bandwidth_mbps,
             'peak_bandwidth': peak_bandwidth,
@@ -220,6 +268,12 @@ class MetricsTracker:
             'real_computation_samples': len(real_computation_times),
             'instantaneous_bandwidth_mbps': instantaneous_mbps if 'instantaneous_mbps' in locals() else 0
         }
+        
+        # Ray 메트릭 병합 (접두사 추가로 구분)
+        for key, value in ray_network_metrics.items():
+            base_metrics[f'ray_{key}'] = value
+            
+        return base_metrics
         
     def track_gpu_metrics(self) -> Dict:
         """Track GPU utilization and memory"""
@@ -340,6 +394,248 @@ class MetricsTracker:
                     'last': values[-1]
                 }
         return summary
+        
+    def _init_ray_monitoring(self):
+        """Initialize Ray cluster monitoring"""
+        try:
+            if ray.is_initialized():
+                self._ray_dashboard_url = None
+                self._ray_cluster_resources = None
+                self._monitor_ray_cluster()
+        except Exception as e:
+            logger.warning(f"Ray 모니터링 초기화 실패: {e}")
+            
+    def _monitor_ray_cluster(self):
+        """Monitor Ray cluster resources and network usage"""
+        # ray_stats_history가 없으면 초기화
+        if not hasattr(self, 'ray_stats_history'):
+            self.ray_stats_history = []
+            
+        try:
+            # Ray가 초기화되지 않은 경우 기본값 반환
+            if not ray.is_initialized():
+                logger.debug("Ray가 초기화되지 않아 기본값 사용")
+                ray_stats = {
+                    'cluster_resources': {},
+                    'available_resources': {},
+                    'task_summary': {"RUNNING": 0, "FINISHED": 0, "FAILED": 0},
+                    'active_tasks': 0,
+                    'network_stats': {'bytes_sent': 0, 'bytes_recv': 0, 'packets_sent': 0, 'packets_recv': 0},
+                    'timestamp': time.time()
+                }
+                self.ray_stats_history.append(ray_stats)
+                self.last_ray_stats = ray_stats
+                return
+                
+            # Ray 클러스터 리소스 모니터링
+            cluster_resources = ray.cluster_resources()
+            available_resources = ray.available_resources()
+            
+            # 태스크 상태 모니터링
+            try:
+                # Ray 2.0+ 지원
+                if hasattr(ray, 'util') and hasattr(ray.util, 'state'):
+                    task_summary = ray.util.state.summarize_tasks()
+                    active_tasks = len([t for t in ray.util.state.list_tasks() if t.get('state') == 'RUNNING'])
+                else:
+                    # 기본값 사용
+                    task_summary = {"RUNNING": 0, "FINISHED": 0, "FAILED": 0}
+                    active_tasks = 0
+            except Exception as e:
+                logger.debug(f"Ray state API 사용 불가: {e}")
+                task_summary = {"RUNNING": 0, "FINISHED": 0, "FAILED": 0}
+                active_tasks = 0
+            
+            # 네트워크 통신 메트릭 수집
+            network_stats = self._get_network_stats()
+            
+            ray_stats = {
+                'cluster_resources': cluster_resources,
+                'available_resources': available_resources,
+                'task_summary': task_summary,
+                'active_tasks': active_tasks,
+                'network_stats': network_stats,
+                'timestamp': time.time()
+            }
+            
+            self.ray_stats_history.append(ray_stats)
+            self.last_ray_stats = ray_stats
+            
+            # 최근 10개 기록만 유지
+            if len(self.ray_stats_history) > 10:
+                self.ray_stats_history = self.ray_stats_history[-10:]
+                
+        except Exception as e:
+            logger.warning(f"Ray 클러스터 모니터링 오류: {e}")
+            # 오류 발생 시 기본값으로 채우기
+            if not hasattr(self, 'ray_stats_history') or len(self.ray_stats_history) == 0:
+                default_stats = {
+                    'cluster_resources': {},
+                    'available_resources': {},
+                    'task_summary': {"RUNNING": 0, "FINISHED": 0, "FAILED": 0},
+                    'active_tasks': 0,
+                    'network_stats': {'bytes_sent': 0, 'bytes_recv': 0, 'packets_sent': 0, 'packets_recv': 0},
+                    'timestamp': time.time()
+                }
+                self.ray_stats_history.append(default_stats)
+                self.last_ray_stats = default_stats
+            
+    def _get_network_stats(self) -> Dict:
+        """Get system network statistics"""
+        try:
+            # psutil을 사용하여 네트워크 통계 수집
+            net_io = psutil.net_io_counters()
+            
+            # 이전 측정값과의 차이 계산
+            current_stats = {
+                'bytes_sent': net_io.bytes_sent,
+                'bytes_recv': net_io.bytes_recv,
+                'packets_sent': net_io.packets_sent,
+                'packets_recv': net_io.packets_recv
+            }
+            
+            # Ray 특정 네트워크 통계 (가능한 경우)
+            ray_network_stats = self._get_ray_network_stats()
+            if ray_network_stats:
+                current_stats.update(ray_network_stats)
+            
+            return current_stats
+            
+        except Exception as e:
+            logger.warning(f"네트워크 통계 수집 오류: {e}")
+            return {'bytes_sent': 0, 'bytes_recv': 0, 'packets_sent': 0, 'packets_recv': 0}
+            
+    def _get_ray_network_stats(self) -> Dict:
+        """Get Ray-specific network statistics"""
+        try:
+            # Ray 노드 정보 가져오기
+            nodes = ray.nodes()
+            
+            total_object_store_used = 0
+            total_object_store_available = 0
+            
+            for node in nodes:
+                if node.get('Alive', False):
+                    resources = node.get('Resources', {})
+                    object_store_used = node.get('ObjectStoreUsedMemory', 0)
+                    object_store_available = node.get('ObjectStoreAvailableMemory', 0)
+                    
+                    total_object_store_used += object_store_used
+                    total_object_store_available += object_store_available
+            
+            return {
+                'ray_nodes': len([n for n in nodes if n.get('Alive', False)]),
+                'object_store_used': total_object_store_used,
+                'object_store_available': total_object_store_available,
+                'object_store_utilization': total_object_store_used / max(total_object_store_used + total_object_store_available, 1)
+            }
+            
+        except Exception as e:
+            logger.warning(f"Ray 네트워크 통계 수집 오류: {e}")
+            return {}
+            
+    def get_ray_communication_overhead(self) -> Dict:
+        """Calculate Ray cluster communication overhead"""
+        # ray_stats_history가 존재하지 않거나 충분한 데이터가 없는 경우 실제 측정 시도
+        if not hasattr(self, 'ray_stats_history') or len(self.ray_stats_history) < 2:
+            # 실시간 네트워크 통계 수집 시도
+            current_net_stats = self._get_network_stats()
+            if not hasattr(self, '_baseline_net_stats'):
+                self._baseline_net_stats = current_net_stats
+                return {
+                    'communication_overhead': 0.0,
+                    'network_load': 0.0,
+                    'bandwidth_utilization': 0.0,
+                    'task_throughput': 0.0
+                }
+            
+            # 베이스라인 대비 네트워크 사용량 변화 계산
+            bytes_diff = (current_net_stats.get('bytes_sent', 0) + current_net_stats.get('bytes_recv', 0)) - \
+                        (self._baseline_net_stats.get('bytes_sent', 0) + self._baseline_net_stats.get('bytes_recv', 0))
+            
+            # 시간 경과 계산 (최소 1초로 제한)
+            elapsed_time = max(time.time() - self.start_time, 1.0)
+            
+            # 통신 오버헤드 계산
+            communication_rate = bytes_diff / elapsed_time
+            network_load_mbps = (communication_rate * 8) / (1024 * 1024)
+            
+            return {
+                'communication_overhead': float(max(communication_rate, 0.0)),
+                'network_load': float(max(network_load_mbps, 0.0)),
+                'bandwidth_utilization': float(min(network_load_mbps / 1024, 1.0)),  # 1 Gbps 기준
+                'task_throughput': 0.0
+            }
+        
+        try:
+            current_stats = self.ray_stats_history[-1]
+            previous_stats = self.ray_stats_history[-2]
+            
+            time_diff = current_stats['timestamp'] - previous_stats['timestamp']
+            
+            # 네트워크 사용량 차이 계산
+            current_net = current_stats.get('network_stats', {})
+            previous_net = previous_stats.get('network_stats', {})
+            
+            bytes_sent_diff = current_net.get('bytes_sent', 0) - previous_net.get('bytes_sent', 0)
+            bytes_recv_diff = current_net.get('bytes_recv', 0) - previous_net.get('bytes_recv', 0)
+            
+            # 통신 오버헤드 계산 (bytes/second)
+            communication_rate = (bytes_sent_diff + bytes_recv_diff) / max(time_diff, 1)
+            
+            # 네트워크 부하 계산 (Mbps)
+            network_load_mbps = (communication_rate * 8) / (1024 * 1024)
+            
+            # 대역폭 사용률 (10 Gbps 기준)
+            max_bandwidth_mbps = 10 * 1024  # 10 Gbps
+            bandwidth_utilization = min(network_load_mbps / max_bandwidth_mbps, 1.0)
+            
+            # 태스크 처리량
+            current_tasks = current_stats.get('task_summary', {}).get('FINISHED', 0)
+            previous_tasks = previous_stats.get('task_summary', {}).get('FINISHED', 0)
+            task_throughput = (current_tasks - previous_tasks) / max(time_diff, 1)
+            
+            return {
+                'communication_overhead': float(communication_rate),
+                'network_load': float(network_load_mbps),
+                'bandwidth_utilization': float(bandwidth_utilization),
+                'task_throughput': float(task_throughput),
+                'bytes_per_second': float(communication_rate),
+                'active_tasks': current_stats.get('active_tasks', 0)
+            }
+            
+        except Exception as e:
+            logger.warning(f"Ray 통신 오버헤드 계산 오류: {e}")
+            # 오류 발생 시에도 실제 네트워크 통계를 반환하도록 개선
+            try:
+                current_net_stats = self._get_network_stats()
+                if hasattr(self, '_baseline_net_stats'):
+                    bytes_diff = (current_net_stats.get('bytes_sent', 0) + current_net_stats.get('bytes_recv', 0)) - \
+                                (self._baseline_net_stats.get('bytes_sent', 0) + self._baseline_net_stats.get('bytes_recv', 0))
+                    elapsed_time = max(time.time() - self.start_time, 1.0)
+                    communication_rate = max(bytes_diff / elapsed_time, 0.0)
+                    network_load_mbps = max((communication_rate * 8) / (1024 * 1024), 0.0)
+                    
+                    return {
+                        'communication_overhead': float(communication_rate),
+                        'network_load': float(network_load_mbps),
+                        'bandwidth_utilization': float(min(network_load_mbps / 1024, 1.0)),
+                        'task_throughput': 0.0
+                    }
+            except:
+                pass
+            
+            return {
+                'communication_overhead': 0.0,
+                'network_load': 0.0,
+                'bandwidth_utilization': 0.0,
+                'task_throughput': 0.0
+            }
+            
+    def update_ray_metrics(self):
+        """Update Ray cluster metrics"""
+        self._monitor_ray_cluster()
+        return self.get_ray_communication_overhead()
         
     def get_metrics_history(self) -> Dict:
         """Get the complete metrics history"""
@@ -572,15 +868,20 @@ class MetricsTracker:
             return 0.0
             
         total_connections = 0
-        positive_connections = 0
+        cooperation_strength = 0.0
         
         for agent_id, connections in social_connections.items():
             for other_id, strength in connections.items():
                 total_connections += 1
-                if strength > 0:
-                    positive_connections += 1
+                # 강도 가중 협력 지수 (단순 양수/음수가 아닌)
+                if strength > 0.1:  # 임계값 이상의 긍정적 연결만 협력으로 간주
+                    cooperation_strength += min(strength, 1.0)  # 최대 1.0으로 제한
                     
-        return positive_connections / max(total_connections, 1)
+        if total_connections == 0:
+            return 0.0
+            
+        # 평균 협력 강도 반환
+        return cooperation_strength / total_connections
         
     def compute_social_network_density(self, social_connections: Dict, num_agents: int) -> float:
         """
@@ -597,12 +898,15 @@ class MetricsTracker:
             return 0.0
             
         max_possible_edges = num_agents * (num_agents - 1)
-        actual_edges = 0
+        significant_edges = 0
         
         for connections in social_connections.values():
-            actual_edges += len(connections)
+            for strength in connections.values():
+                # 유의미한 연결만 카운트 (임계값 이상)
+                if abs(strength) > 0.1:  # 0.1 이상의 강도를 가진 연결만 인정
+                    significant_edges += 1
             
-        return actual_edges / max_possible_edges
+        return significant_edges / max_possible_edges
         
     def compute_environmental_adaptation_score(self, agent_states: List[Dict], environment_stats: Dict) -> float:
         """
@@ -626,7 +930,19 @@ class MetricsTracker:
         max_possible_resources = environment_stats.get('total_resources', 1000) / len(agent_states)
         resource_efficiency = min(avg_resources / max_possible_resources, 1.0)
         
-        # 환경적 위험 회피 (위험 지역 근처 에이전트 비율)
-        danger_avoidance = 1.0  # 간단한 구현을 위해 기본값
+        # 환경적 위험 회피 개선 (실제 적응 능력 측정)
+        # 체력과 자원의 변동성을 통한 적응력 측정
+        health_values = [state.get('health', 0) for state in agent_states]
+        resource_values = [state.get('resources', 0) for state in agent_states]
         
-        return 0.5 * survival_rate + 0.3 * resource_efficiency + 0.2 * danger_avoidance
+        # 적응력 지표: 낮은 변동성 = 높은 적응력
+        health_stability = 1.0 - (np.std(health_values) / (np.mean(health_values) + 1e-8))
+        resource_stability = 1.0 - (np.std(resource_values) / (np.mean(resource_values) + 1e-8))
+        adaptation_stability = np.clip((health_stability + resource_stability) / 2, 0.0, 1.0)
+        
+        # 환경 압박 시뮬레이션 (자원 경쟁, 체력 손실 등)
+        low_health_agents = sum(1 for state in agent_states if state.get('health', 0) < 0.3)
+        low_resource_agents = sum(1 for state in agent_states if state.get('resources', 0) < 20)
+        stress_factor = 1.0 - ((low_health_agents + low_resource_agents) / (len(agent_states) * 2))
+        
+        return 0.4 * survival_rate + 0.3 * resource_efficiency + 0.2 * adaptation_stability + 0.1 * stress_factor

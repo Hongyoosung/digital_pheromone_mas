@@ -50,8 +50,8 @@ class PheromoneNetworkTrainer:
         if attention_params:
             self.attention_optimizer = optim.Adam(
                 self.attention_router.parameters(),
-                lr=config['hyperparameters']['learning_rate'][0],
-                weight_decay=1e-5
+                lr=config['hyperparameters']['learning_rate'][0] * 0.5,  # 학습률 절반으로 감소
+                weight_decay=5e-4  # 정규화 강화: 1e-5 -> 5e-4
             )
             logger.info("어텐션 옵티마이저 초기화 완료")
         else:
@@ -61,8 +61,8 @@ class PheromoneNetworkTrainer:
         if diffusion_params:
             self.diffusion_optimizer = optim.Adam(
                 self.diffusion_model.parameters(),
-                lr=config['hyperparameters']['learning_rate'][0] * 0.1,  # 확산 모델은 더 천천히 학습
-                weight_decay=1e-5
+                lr=config['hyperparameters']['learning_rate'][0] * 0.05,  # 확산 모델 학습률 더 감소: 0.1 -> 0.05
+                weight_decay=3e-4  # 정규화 강화: 1e-5 -> 3e-4
             )
             logger.info("확산 옵티마이저 초기화 완료")
         else:
@@ -72,17 +72,23 @@ class PheromoneNetworkTrainer:
         # 학습률 스케줄러 (옵티마이저가 있는 경우에만)
         if self.attention_optimizer:
             self.attention_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-                self.attention_optimizer, mode='min', factor=0.5, patience=20, verbose=True
+                self.attention_optimizer, mode='min', factor=0.7, patience=15, verbose=True  # 더 빠른 학습률 감소
             )
         else:
             self.attention_scheduler = None
             
         if self.diffusion_optimizer:
             self.diffusion_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-                self.diffusion_optimizer, mode='min', factor=0.5, patience=30, verbose=True
+                self.diffusion_optimizer, mode='min', factor=0.7, patience=20, verbose=True  # 더 빠른 학습률 감소
             )
         else:
             self.diffusion_scheduler = None
+            
+        # 조기 종료를 위한 추가 속성들
+        self.early_stopping_patience = 25
+        self.early_stopping_counter = 0
+        self.best_loss = float('inf')
+        self.early_stopping_threshold = 1e-4
         
         # 학습 히스토리 추적
         self.training_history = defaultdict(list)
@@ -173,7 +179,28 @@ class PheromoneNetworkTrainer:
                 self.training_history[key].append(value)
         
         self.previous_total_loss = losses['total_loss']
+        
+        # 조기 종료 체크
+        self._check_early_stopping(losses['total_loss'])
+        
         return losses
+    
+    def _check_early_stopping(self, current_loss: float) -> bool:
+        """조기 종료 조건 확인"""
+        if current_loss < self.best_loss - self.early_stopping_threshold:
+            self.best_loss = current_loss
+            self.early_stopping_counter = 0
+        else:
+            self.early_stopping_counter += 1
+            
+        if self.early_stopping_counter >= self.early_stopping_patience:
+            logger.info(f"조기 종료 조건 만족: {self.early_stopping_patience} 에포크 동안 개선 없음")
+            return True
+        return False
+    
+    def should_stop_training(self) -> bool:
+        """학습 중단 여부 확인"""
+        return self.early_stopping_counter >= self.early_stopping_patience
 
     def _calculate_attention_loss(self, agent_embeddings: torch.Tensor, rewards: torch.Tensor, timestep: int) -> torch.Tensor:
         """어텐션 라우터 손실 계산"""

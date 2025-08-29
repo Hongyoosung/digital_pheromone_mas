@@ -1,0 +1,101 @@
+# 4D 디지털 페로몬 기반 멀티에이전트 시스템 실험 설정
+experiment:
+  name: "DigitalPheromoneMAS_MainExperiment"
+  log_dir: "results/"
+  device: "cuda:0"
+  save_interval: 500 # 체크포인트 저장 주기
+
+# 시뮬레이션 환경 설정
+environment:
+  map_size: [50, 50] # 표준 맵 크기
+  num_agents: 10  # 표준 에이전트 수
+  max_timesteps: 1000  
+
+# 페로몬 관련 설정 - 4차원 디지털 페로몬 (행동, 감정, 사회관계, 환경맥락)
+pheromone:
+  decay_rate: 0.98 # 표준 감쇠율
+  dimensions:
+    behavior: 4   # 행동 차원
+    emotion: 5    # 감정 차원
+    social: 10    # 사회관계 차원
+    context: 5    # 환경맥락 차원
+  lifecycle:
+    min_magnitude_threshold: 0.01
+    max_lifetime_seconds: 120.0
+  
+# 어텐션 네트워크 관련 설정 - 분산 어텐션 라우팅
+attention:
+  embed_dim: 64 # 임베딩 차원 (에이전트 인코더 출력과 일치)
+  num_heads: 8  # 표준 헤드 수
+  topology_type: "full"
+  
+# 학습 및 시뮬레이션 하이퍼파라미터
+hyperparameters:
+  communication_period: [1, 2, 3] # 다중 값으로 그리드 서치
+  learning_rate: [0.001, 0.0005] # 다중 학습률
+  batch_size: [16, 32] # 다중 배치 크기
+  train_networks: true
+  training_frequency: 10  # 표준 학습 빈도
+  alpha: [0.2, 0.3, 0.4]  # 페로몬 가중치 파라미터
+  beta: [0.2, 0.3, 0.4]   # 어텐션 가중치 파라미터
+
+# 모니터링 및 로깅 설정
+monitoring:
+  use_wandb: true
+  log_frequency: 100
+  track_communication_overhead: true
+  track_network_load: true
+  track_computation_overhead: true
+  track_information_transfer_efficiency: true
+  track_learning_convergence: true
+  track_attention_entropy: true
+  track_pheromone_diffusion_rate: true
+  track_agent_cooperation: true
+  track_social_network_density: true
+  track_environmental_adaptation: true
+
+# 메모리 관리 설정  
+memory_management:
+  max_memory_percent: 85.0
+  warning_memory_percent: 75.0
+  cleanup_threshold_percent: 80.0
+  memory_monitor_interval: 50
+
+# 연구 설계 - 베이스라인 비교 및 성능 지표
+research_design:
+  baseline_methods: ["rule_based_diffusion", "centralized_attention", "ablation_2d_pheromone"]
+  performance_metrics: ["shannon_entropy", "learning_convergence_speed", "communication_overhead", "network_load", "information_transfer_efficiency"]
+  statistical_analysis:
+    significance_level: 0.05
+    test_type: "t_test"
+    confidence_interval: 0.95
+  num_runs: 3 
+
+# 비교군 모델 설정
+models:
+  use_proposed: true
+  use_rule_based: true
+  baseline_decay_rate: 0.1
+  baseline_diffusion_rate: 0.2
+  use_centralized: true
+  max_agents: 500
+  use_2d_pheromone: true # 2D 페로몬 비교군 포함
+  track_information_loss: true
+
+# Ray 분산 처리 설정 (NVIDIA A6000 환경 최적화)
+ray_config:
+  num_cpus: 8
+  num_gpus: 1
+  memory: 32000000000  # 32GB
+  object_store_memory: 16000000000  # 16GB
+  dashboard_host: "0.0.0.0"
+  dashboard_port: 8265
+
+# 실험 변형 설정 (ablation study)
+ablation_study:
+  disable_behavior_dimension: false
+  disable_emotion_dimension: false
+  disable_social_dimension: false
+  disable_context_dimension: false
+  disable_attention_routing: false
+  disable_pheromone_decay: false

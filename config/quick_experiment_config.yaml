@@ -1,0 +1,83 @@
+# 빠른 실험용 설정 (100스텝)
+experiment:
+  name: "DigitalPheromoneMAS_QuickTest"
+  log_dir: "results/"
+  device: "cuda:0"
+  save_interval: 100 # 체크포인트 저장 주기
+
+# 시뮬레이션 환경 설정 (빠른 테스트용)
+environment:
+  map_size: [25, 25] # 축소된 맵 크기
+  num_agents: 5  # 축소된 에이전트 수
+  max_timesteps: 100  # 100스텝으로 축소
+
+# 페로몬 관련 설정
+pheromone:
+  decay_rate: 0.95 # 빠른 감쇠로 계산량 감소
+  dimensions:
+    behavior: 4  # 원래 차원 유지 (모델 호환성)
+    emotion: 5   # 원래 차원 유지
+    social: 10   # 원래 차원 유지
+    context: 5   # 원래 차원 유지
+  lifecycle:
+    min_magnitude_threshold: 0.01
+    max_lifetime_seconds: 60.0
+  
+# 어텐션 네트워크 관련 설정
+attention:
+  embed_dim: 64 # 원래 임베딩 차원 유지 (에이전트 인코더 출력과 일치)
+  num_heads: 4  # 축소된 헤드 수
+  topology_type: "full"
+  
+# 학습 및 시뮬레이션 하이퍼파라미터
+hyperparameters:
+  communication_period: [1] # 단일 값으로 단순화
+  learning_rate: [0.001] # 단일 값
+  batch_size: [16] # 단일 값
+  train_networks: true
+  training_frequency: 20  # 더 적은 빈도로 학습
+  alpha: [0.3]  # 단일 값
+  beta: [0.3]   # 단일 값
+
+# 모니터링 및 로깅 설정
+monitoring:
+  use_wandb: False
+  log_frequency: 100 # 마지막에만 로그
+  track_communication_overhead: true
+  track_network_load: true
+  track_computation_overhead: true
+  track_information_transfer_efficiency: true
+  track_learning_convergence: true
+  track_attention_entropy: true
+  track_pheromone_diffusion_rate: true
+  track_agent_cooperation: true
+  track_social_network_density: true
+  track_environmental_adaptation: true
+
+# 메모리 관리 설정  
+memory_management:
+  max_memory_percent: 85.0
+  warning_memory_percent: 75.0
+  cleanup_threshold_percent: 80.0
+  memory_monitor_interval: 100
+
+# 연구 설계 (빠른 테스트용)
+research_design:
+  baseline_methods: ["rule_based_diffusion", "centralized_attention", "ablation_2d_pheromone"]
+  performance_metrics: ["shannon_entropy", "learning_convergence_speed", "communication_overhead", "network_load", "information_transfer_efficiency"]
+  statistical_analysis:
+    significance_level: 0.05
+    test_type: "t_test"
+    confidence_interval: 0.95
+  num_runs: 10
+
+# 비교군 모델 설정
+models:
+  use_proposed: true
+  use_rule_based: false
+  baseline_decay_rate: 0.1
+  baseline_diffusion_rate: 0.2
+  use_centralized: false
+  max_agents: 500
+  use_2d_pheromone: false
+  track_information_loss: true

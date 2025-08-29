@@ -1,0 +1,55 @@
+{
+    "os": "Windows-10-10.0.26100-SP0",
+    "python": "3.11.13",
+    "heartbeatAt": "2025-08-29T02:11:42.704855",
+    "startedAt": "2025-08-29T02:11:41.662956",
+    "docker": null,
+    "cuda": null,
+    "args": [
+        "--config",
+        "config/config.yaml"
+    ],
+    "state": "running",
+    "program": "-m src.experiments.run_comparison",
+    "codePathLocal": null,
+    "git": {
+        "remote": "https://github.com/Hongyoosung/digital_pheromone_mas.git",
+        "commit": "096219c4cd424c6abfaf8323156966e8c958f7e8"
+    },
+    "email": "yoosung5508@gmail.com",
+    "root": "C:/Users/PC/Documents/Works/research/digital_pheromone_mas",
+    "host": "DESKTOP-IS6T5I8",
+    "username": "PC",
+    "executable": "C:\\Users\\PC\\anaconda3\\envs\\digital_pheromone\\python.exe",
+    "cpu_count": 12,
+    "cpu_count_logical": 24,
+    "cpu_freq": {
+        "current": 2195.0,
+        "min": 0.0,
+        "max": 2195.0
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 2195.0,
+            "min": 0.0,
+            "max": 2195.0
+        }
+    ],
+    "disk": {
+        "/": {
+            "total": 1861.3115425109863,
+            "used": 903.5324096679688
+        }
+    },
+    "gpu": "NVIDIA RTX A6000",
+    "gpu_count": 1,
+    "gpu_devices": [
+        {
+            "name": "NVIDIA RTX A6000",
+            "memory_total": 51527024640
+        }
+    ],
+    "memory": {
+        "total": 95.71035766601562
+    }
+}

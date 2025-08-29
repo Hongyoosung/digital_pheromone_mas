@@ -32,15 +32,52 @@ class PheromoneVector:
             np.concatenate([self.behavior, self.emotion, self.social, self.context])
         )
     
-    def to_tensor(self, device='cuda'):
-        """Convert to PyTorch tensor"""
+    def to_tensor(self, device='cuda', dimensions_config=None):
+        """Convert to PyTorch tensor
+        
+        Args:
+            device: PyTorch device
+            dimensions_config: Dict specifying which dimensions to include (e.g., {'behavior': 4, 'emotion': 5})
+                             If None, includes all dimensions
+        """
+        if dimensions_config is None:
+            # Default: include all dimensions
+            components = [self.behavior, self.emotion, self.social, self.context]
+        else:
+            # Include only specified dimensions with correct key mapping
+            components = []
+            # 설정 파일의 키를 클래스 속성에 매핑
+            key_mapping = {
+                'behavior': self.behavior,
+                'behavioral': self.behavior,
+                'emotion': self.emotion,
+                'emotional': self.emotion,
+                'social': self.social,
+                'context': self.context,
+                'environmental': self.context
+            }
+            
+            # dimensions_config의 키 순서를 일정하게 유지
+            sorted_keys = sorted(dimensions_config.keys())
+            for config_key in sorted_keys:
+                dim_size = dimensions_config[config_key]
+                if dim_size > 0 and config_key in key_mapping:
+                    # 지정된 크기만큼 자르거나 패딩
+                    component = key_mapping[config_key].copy()
+                    if len(component) > dim_size:
+                        component = component[:dim_size]  # 자르기
+                    elif len(component) < dim_size:
+                        # 패딩
+                        padding = np.zeros(dim_size - len(component))
+                        component = np.concatenate([component, padding])
+                    components.append(component)
+            
+            # components가 비어있으면 기본값 사용
+            if not components:
+                components = [np.zeros(1)]  # 최소 크기 1인 벡터
+        
         return torch.tensor(
-            np.concatenate([
-                self.behavior, 
-                self.emotion, 
-                self.social, 
-                self.context
-            ]),
+            np.concatenate(components),
             dtype=torch.float32,
             device=device
         )
@@ -73,12 +110,29 @@ class PheromoneVector:
         self.context[self.context < cleanup_threshold] = 0
         
     def __add__(self, other):
-        """Vector addition for pheromone aggregation"""
+        """Vector addition for pheromone aggregation with broadcasting safety"""
+        def safe_add(a, b):
+            """Safely add two arrays, handling different sizes"""
+            if len(a) == 0 and len(b) == 0:
+                return np.array([])
+            elif len(a) == 0:
+                return b.copy()
+            elif len(b) == 0:
+                return a.copy()
+            elif len(a) == len(b):
+                return a + b
+            else:
+                # Handle size mismatch by using the smaller size
+                min_len = min(len(a), len(b))
+                if min_len == 0:
+                    return np.array([])
+                return a[:min_len] + b[:min_len]
+        
         return PheromoneVector(
-            behavior=self.behavior + other.behavior,
-            emotion=self.emotion + other.emotion,
-            social=self.social + other.social,
-            context=self.context + other.context,
+            behavior=safe_add(self.behavior, other.behavior),
+            emotion=safe_add(self.emotion, other.emotion),
+            social=safe_add(self.social, other.social),
+            context=safe_add(self.context, other.context),
             timestamp=max(self.timestamp, other.timestamp),
             agent_id=self.agent_id
         )
@@ -87,10 +141,10 @@ class PheromoneVector:
     def zeros(cls, p_dims: Dict[str, int]):
         """Create a PheromoneVector filled with zeros."""
         return cls(
-            behavior=np.zeros(p_dims['behavior']),
-            emotion=np.zeros(p_dims['emotion']),
-            social=np.zeros(p_dims['social']),
-            context=np.zeros(p_dims['context']),
+            behavior=np.zeros(p_dims.get('behavior', 4)),
+            emotion=np.zeros(p_dims.get('emotion', 5)),
+            social=np.zeros(p_dims.get('social', 10)),
+            context=np.zeros(p_dims.get('context', 5)),
             timestamp=0.0,
             agent_id=-1
         )
@@ -115,10 +169,29 @@ class PheromoneEncoder(nn.Module):
 
 class PheromoneField:
     """Spatial pheromone field management"""
-    def __init__(self, grid_size: Tuple[int, int], decay_rate: float = 0.98):
+    def __init__(self, grid_size: Tuple[int, int], decay_rate: float = 0.98, p_dims: Dict[str, int] = None):
         self.grid_size = grid_size
         self.decay_rate = decay_rate
         self.field: Dict[Tuple[int, int], List[PheromoneVector]] = {}
+        
+        # 페로몬 차원 설정 저장 및 키 매핑
+        if p_dims:
+            # 설정 파일의 키를 내부 키로 매핑
+            key_mapping = {
+                'behavioral': 'behavior',
+                'emotional': 'emotion', 
+                'environmental': 'context',
+                'social': 'social'
+            }
+            self.p_dims = {}
+            for config_key, size in p_dims.items():
+                internal_key = key_mapping.get(config_key, config_key)
+                self.p_dims[internal_key] = size
+        else:
+            self.p_dims = {'behavior': 4, 'emotion': 5, 'social': 10, 'context': 5}
+        
+        # 필드 강제 초기화 (차원 문제 해결용)
+        self.field.clear()
         
         # 초기 페로몬 필드 생성 - 빈 필드 문제 해결
         self._initialize_field()
@@ -135,12 +208,12 @@ class PheromoneField:
             y = np.random.randint(0, self.grid_size[1])
             position = (x, y)
             
-            # 초기 페로몬 벡터 생성
+            # 동적 차원을 사용한 초기 페로몬 벡터 생성
             initial_pheromone = PheromoneVector(
-                behavior=np.random.rand(4) * 2.0 + 0.5,  # 0.5~2.5 범위
-                emotion=np.random.rand(5) * 1.5 + 0.3,   # 0.3~1.8 범위
-                social=np.random.rand(10) * 1.2 + 0.2,   # 0.2~1.4 범위
-                context=np.random.rand(5) * 1.8 + 0.4,   # 0.4~2.2 범위
+                behavior=np.random.rand(self.p_dims['behavior']) * 2.0 + 0.5,  # 0.5~2.5 범위
+                emotion=np.random.rand(self.p_dims['emotion']) * 1.5 + 0.3,     # 0.3~1.8 범위
+                social=np.random.rand(self.p_dims['social']) * 1.2 + 0.2,       # 0.2~1.4 범위
+                context=np.random.rand(self.p_dims['context']) * 1.8 + 0.4,     # 0.4~2.2 범위
                 timestamp=time.time(),
                 agent_id=-1  # 시스템 생성 페로몬
             )

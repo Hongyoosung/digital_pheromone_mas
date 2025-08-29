@@ -23,12 +23,15 @@ class AgentState:
     emotion_state: np.ndarray
     social_connections: Dict[int, float]
     
-@ray.remote
+@ray.remote(num_cpus=0.25, num_gpus=0.05)
 class DistributedAgent:
     """Ray-based distributed agent"""
     def __init__(self, agent_id: int, config: Dict):
         self.agent_id = agent_id
         self.config = config
+        
+        # 페로몬 차원 설정 저장
+        self.dimensions_config = config.get('dimensions_config', None)
         
         # Set device for this agent with memory optimization
         device_str = config.get('device', 'cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -76,8 +79,17 @@ class DistributedAgent:
         
     def _build_encoder(self):
         """Build pheromone encoder network with reduced size"""
+        # 페로몬 차원 계산: 설정에서 각 차원의 크기 합산
+        if 'pheromone' in self.config and 'dimensions' in self.config['pheromone']:
+            pheromone_dim = sum(self.config['pheromone']['dimensions'].values())
+        else:
+            pheromone_dim = self.config.get('pheromone_dim', 16)  # 기본값 16
+        
+        # 디버깅을 위한 로깅
+        print(f"Agent {self.agent_id}: Expected pheromone input dim = {pheromone_dim}")
+            
         return PheromoneEncoder(
-            input_dim=self.config['pheromone_dim'],
+            input_dim=pheromone_dim,
             hidden_dim=128,  # 크기 감소: 256 -> 128
             output_dim=64    # 출력 차원 감소: 128 -> 64
         )
@@ -111,17 +123,57 @@ class DistributedAgent:
                 # Ensure aggregated tensor is on the correct device
                 if aggregated.device != self.device:
                     aggregated = aggregated.to(self.device)
+                
+                # 차원 안전장치: 인코더의 예상 입력 차원과 맞지 않으면 조정
+                expected_dim = self.pheromone_encoder.encoder[0].in_features
+                if aggregated.shape[0] != expected_dim:
+                    if aggregated.shape[0] < expected_dim:
+                        # 패딩
+                        padding = torch.zeros(expected_dim - aggregated.shape[0], device=self.device)
+                        aggregated = torch.cat([aggregated, padding])
+                    else:
+                        # 잘라내기
+                        aggregated = aggregated[:expected_dim]
+                
                 return self.pheromone_encoder(aggregated)
         else:
             return torch.zeros(64, device=self.device)  # 출력 차원 감소: 128->64
             
     def _aggregate_pheromones(self, pheromones: List) -> torch.Tensor:
         """Aggregate multiple pheromone vectors"""
-        if not pheromones:
-            return torch.zeros(self.config['pheromone_dim'], device=self.device)
+        # 페로몬 차원 계산
+        if 'pheromone' in self.config and 'dimensions' in self.config['pheromone']:
+            pheromone_dim = sum(self.config['pheromone']['dimensions'].values())
+        else:
+            pheromone_dim = self.config.get('pheromone_dim', 16)
             
-        vectors = [p.to_tensor(device=self.device) for p in pheromones]
-        return torch.stack(vectors).mean(dim=0)
+        if not pheromones:
+            return torch.zeros(pheromone_dim, device=self.device)
+            
+        # 설정에서 dimensions_config를 가져옴
+        dimensions_config = self.config.get('pheromone', {}).get('dimensions', None)
+        vectors = [p.to_tensor(device=self.device, dimensions_config=dimensions_config) for p in pheromones]
+        
+        # 벡터 크기가 일치하지 않으면 가장 작은 크기로 맞춤
+        if vectors:
+            min_size = min(v.size(0) for v in vectors)
+            vectors = [v[:min_size] for v in vectors]
+            aggregated = torch.stack(vectors).mean(dim=0)
+            
+            # 차원 안전장치: 예상 차원과 다르면 조정
+            if aggregated.size(0) != pheromone_dim:
+                if aggregated.size(0) < pheromone_dim:
+                    # 패딩
+                    padding = torch.zeros(pheromone_dim - aggregated.size(0), device=self.device)
+                    aggregated = torch.cat([aggregated, padding])
+                else:
+                    # 잘라내기
+                    aggregated = aggregated[:pheromone_dim]
+                    
+            print(f"Agent {self.agent_id}: Aggregated pheromone tensor size = {aggregated.size()}, expected = {pheromone_dim}")
+            return aggregated
+        else:
+            return torch.zeros(pheromone_dim, device=self.device)
         
     def decide_action(self, encoded_pheromones: torch.Tensor) -> int:
         """Decide next action based on pheromones and state"""
@@ -136,6 +188,18 @@ class DistributedAgent:
         
         with torch.no_grad():  # 추론 시 메모리 절약
             combined = torch.cat([encoded_pheromones, state_vector])
+            
+            # 차원 안전장치: decision_network의 예상 입력 차원과 맞지 않으면 조정
+            expected_dim = self.decision_network[0].in_features
+            if combined.shape[0] != expected_dim:
+                if combined.shape[0] < expected_dim:
+                    # 패딩
+                    padding = torch.zeros(expected_dim - combined.shape[0], device=self.device)
+                    combined = torch.cat([combined, padding])
+                else:
+                    # 잘라내기
+                    combined = combined[:expected_dim]
+            
             action_logits = self.decision_network(combined)
             action_probs = torch.softmax(action_logits, dim=-1)
             
@@ -201,6 +265,7 @@ class DistributedAgent:
         # Store last action results for state tracking
         self.last_action_success = action_result['success']
         self.last_action_reward = action_result['reward']
+        self.last_computation_time = execution_time  # 실제 계산 시간 저장
         
         # Update emotional state based on action result
         self._update_emotional_state(action, action_result)
@@ -430,10 +495,29 @@ class DistributedAgent:
         
     def emit_pheromone(self) -> PheromoneVector:
         """Emit pheromone based on current state"""
-        behavior = self._compute_behavior_vector()
-        emotion = self.state.emotion_state
-        social = self._compute_social_vector()
-        context = self._compute_context_vector()
+        # 설정에서 차원 정보 가져오기
+        dimensions_config = self.config.get('pheromone', {}).get('dimensions', {
+            'behavior': 4, 'emotion': 5, 'social': 10, 'context': 5
+        })
+        
+        # 각 차원의 크기에 맞춰 벡터 생성
+        behavior_size = dimensions_config.get('behavior', 4)
+        emotion_size = dimensions_config.get('emotion', 5)
+        social_size = dimensions_config.get('social', 10)
+        context_size = dimensions_config.get('context', 5)
+        
+        # 기본 벡터 계산하고 크기에 맞춰 자르거나 패딩
+        behavior_full = self._compute_behavior_vector()
+        behavior = self._resize_vector(behavior_full, behavior_size)
+        
+        emotion_full = self.state.emotion_state
+        emotion = self._resize_vector(emotion_full, emotion_size)
+        
+        social_full = self._compute_social_vector()
+        social = self._resize_vector(social_full, social_size)
+        
+        context_full = self._compute_context_vector()
+        context = self._resize_vector(context_full, context_size)
         
         return PheromoneVector(
             behavior=behavior,
@@ -443,6 +527,17 @@ class DistributedAgent:
             timestamp=time.time(),
             agent_id=self.agent_id
         )
+    
+    def _resize_vector(self, vector: np.ndarray, target_size: int) -> np.ndarray:
+        """벡터를 목표 크기로 조정 (자르거나 패딩)"""
+        if len(vector) == target_size:
+            return vector
+        elif len(vector) > target_size:
+            return vector[:target_size]  # 자르기
+        else:
+            # 패딩
+            padding = np.zeros(target_size - len(vector))
+            return np.concatenate([vector, padding])
         
     def _compute_behavior_vector(self) -> np.ndarray:
         """Compute behavior dimension from action history"""
@@ -499,10 +594,13 @@ class DistributedAgent:
         self.metrics['messages_sent'] += 1
         self.metrics['bytes_sent'] += message_size
         
-        # Update social connections
-        if target_agent_id not in self.state.social_connections:
-            self.state.social_connections[target_agent_id] = 0
-        self.state.social_connections[target_agent_id] += 1
+        # Update social connections with realistic interaction
+        interaction_success = np.random.random() < 0.7  # 70% 통신 성공률
+        if interaction_success:
+            self.update_social_connections(target_agent_id, 'communication', 0.1)
+        else:
+            # 통신 실패시 약간의 부정적 영향
+            self.update_social_connections(target_agent_id, 'competition', 0.05)
         
         return message
         
@@ -518,10 +616,13 @@ class DistributedAgent:
             'timestamp': time.time()
         })
         
-        # Update social connections
-        if sender_id not in self.state.social_connections:
-            self.state.social_connections[sender_id] = 0
-        self.state.social_connections[sender_id] += 1
+        # Update social connections with message understanding
+        message_understanding = np.random.random() < 0.8  # 80% 메시지 이해율
+        if message_understanding:
+            self.update_social_connections(sender_id, 'communication', 0.08)
+        else:
+            # 메시지 오해시 부정적 영향
+            self.update_social_connections(sender_id, 'competition', 0.03)
         
     def get_metrics(self) -> Dict:
         """Get agent metrics"""
