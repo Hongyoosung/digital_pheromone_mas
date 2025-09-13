@@ -156,3 +156,10 @@ results/*
 
 # Project-specific virtual environment
 digital_pheromone/
+
+# IDE and AI assistant files
+.claude/
+.cursor/
+CLAUDE.md
+GEMINI.md
+paper_drage.md
