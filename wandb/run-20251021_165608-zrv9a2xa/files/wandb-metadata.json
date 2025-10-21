@@ -1,0 +1,210 @@
+{
+    "os": "Linux-5.15.0-139-generic-x86_64-with-glibc2.31",
+    "python": "3.10.18",
+    "heartbeatAt": "2025-10-21T07:56:09.964182",
+    "startedAt": "2025-10-21T07:56:08.913792",
+    "docker": null,
+    "cuda": null,
+    "args": [
+        "--config",
+        "config/config.yaml"
+    ],
+    "state": "running",
+    "program": "-m src.experiments.run_comparison",
+    "codePathLocal": null,
+    "git": {
+        "remote": "https://github.com/Hongyoosung/digital_pheromone_mas.git",
+        "commit": "a0a740414d41d2ee37cd24626a18b03e7e255e08"
+    },
+    "email": "yoosung5508@gmail.com",
+    "root": "/home/swim/projects/digital_pheromone_mas",
+    "host": "SWIM",
+    "username": "swim",
+    "executable": "/home/swim/anaconda3/envs/4d/bin/python",
+    "cpu_count": 24,
+    "cpu_count_logical": 32,
+    "cpu_freq": {
+        "current": 3160.90934375,
+        "min": 800.0,
+        "max": 5300.0
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 1949.099,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 6100.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        },
+        {
+            "current": 3200.0,
+            "min": 800.0,
+            "max": 4500.0
+        }
+    ],
+    "disk": {
+        "/": {
+            "total": 1832.2072448730469,
+            "used": 314.8400650024414
+        }
+    },
+    "gpu": "NVIDIA RTX 6000 Ada Generation",
+    "gpu_count": 1,
+    "gpu_devices": [
+        {
+            "name": "NVIDIA RTX 6000 Ada Generation",
+            "memory_total": 51527024640
+        }
+    ],
+    "memory": {
+        "total": 125.533203125
+    }
+}
