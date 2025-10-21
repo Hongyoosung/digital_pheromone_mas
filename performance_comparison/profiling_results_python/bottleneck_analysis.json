@@ -1,0 +1,23 @@
+{
+  "communication": {
+    "time_ms": 0.03461166200122534,
+    "percentage": 0.0015399112774462755,
+    "priority": "MEDIUM",
+    "cpp_speedup_potential": "4-10x",
+    "description": "Message serialization/deserialization (JSON)"
+  },
+  "field_operations": {
+    "time_ms": 2247.265123609982,
+    "percentage": 99.9833208568891,
+    "priority": "HIGH",
+    "cpp_speedup_potential": "2-5x",
+    "description": "Pheromone diffusion and decay"
+  },
+  "spatial_queries": {
+    "time_ms": 0.3402754320022723,
+    "percentage": 0.015139231833468486,
+    "priority": "MEDIUM",
+    "cpp_speedup_potential": "3-10x",
+    "description": "Environment resource/hazard queries"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "timestamp": "2025-10-21 15:59:27",
+  "benchmarks": [
+    {
+      "name": "Field Decay (SIMD AVX2)",
+      "python_time_ms": 2.133252000930952,
+      "cpp_time_ms": 2.4060089999693446,
+      "speedup": 0.886635087798147,
+      "target_speedup": "2-5x",
+      "status": "\u26a0 LOW",
+      "details": {
+        "positions": 1000,
+        "pheromones": 5000
+      }
+    },
+    {
+      "name": "Field Aggregation (SIMD)",
+      "python_time_ms": 0.44066199916414917,
+      "cpp_time_ms": 0.11878499935846776,
+      "speedup": 3.7097445093578303,
+      "target_speedup": "2.5-5x",
+      "status": "\u2713 PASS",
+      "details": {
+        "groups": 100
+      }
+    },
+    {
+      "name": "Spatial KNN Query (R-tree)",
+      "python_time_ms": 147.03604100213852,
+      "cpp_time_ms": 1.4384880014404189,
+      "speedup": 102.21568817738147,
+      "target_speedup": "5-15x",
+      "status": "\u2713 PASS",
+      "details": {
+        "resources": 5000,
+        "queries": 200,
+        "k": 10
+      }
+    },
+    {
+      "name": "Spatial Radius Query (R-tree)",
+      "python_time_ms": 74.50972299920977,
+      "cpp_time_ms": 30.913627000700217,
+      "speedup": 2.410254966119701,
+      "target_speedup": "2-3x",
+      "status": "\u2713 PASS",
+      "details": {
+        "resources": 10000,
+        "queries": 200,
+        "radius": 20.0
+      }
+    }
+  ],
+  "summary": {
+    "total_tests": 4,
+    "passed": 3,
+    "average_speedup": 27.305580685164287,
+    "max_speedup": 102.21568817738147,
+    "min_speedup": 0.886635087798147
+  }
+}

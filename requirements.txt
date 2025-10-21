@@ -1,7 +1,9 @@
 # Core dependencies
 numpy==1.24.3
 
-torch==2.6.0
+#torch==2.6.0
+#conda install pybind11
+pybind11
 
 ray[default]==2.8.0
 pettingzoo==1.24.1
@@ -9,21 +11,21 @@ gymnasium==0.29.1
 
 # ML and optimization
 scikit-learn==1.3.2
-scipy==1.11.4
+scipy
 optuna==3.4.0
 
 # Visualization and monitoring
-matplotlib==3.8.2
+matplotlib
 seaborn==0.13.0
-tensorboard==2.15.1
+tensorboard
 wandb==0.16.1
 
 # Network analysis
-networkx==3.2.1
+networkx
 python-louvain==0.16
 
 # Data handling
-pandas==2.1.4
+pandas
 pyyaml==6.0.1
 tqdm==4.66.1
 
@@ -35,3 +37,9 @@ psutil==5.9.6
 # Testing
 pytest==7.4.3
 pytest-cov==4.1.0
+
+# pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# cd cpp_backend && ./build.sh
+# cd cpp_backend && mkdir -p build && cd build && cmake .. && make install
+# python3 test_cpp_accelerators.py 2>&1 | head -100  
