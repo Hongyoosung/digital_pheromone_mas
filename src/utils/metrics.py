@@ -385,7 +385,7 @@ class MetricsTracker:
                         summary[key][sub_key] = {'last': sub_values[-1]}
             
             # Handle list of numbers
-            elif isinstance(values[0], (int, float, np.number)):
+            elif isinstance(values[0], (int, float, np.generic)):
                 summary[key] = {
                     'mean': np.mean(values),
                     'std': np.std(values),

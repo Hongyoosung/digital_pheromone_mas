@@ -41,6 +41,7 @@ pytest-cov==4.1.0
 
 PyYAML
 
+# python -m pip install -r requirements.txt
 # pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 # cd cpp_backend && ./build.sh

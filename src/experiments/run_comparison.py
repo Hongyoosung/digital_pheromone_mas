@@ -272,9 +272,9 @@ class ComparisonExperimentRunner:
                             value = last_metrics[metric]
                     
                     # 값이 숫자가 아닌 경우 0.0으로 설정
-                    if not isinstance(value, (int, float, np.number)):
+                    if not isinstance(value, (int, float, np.generic)):
                         value = 0.0
-                    
+
                     values.append(float(value))
                 
                 metric_data[method] = {
@@ -811,7 +811,7 @@ class ComparisonExperimentRunner:
             for source in metrics_sources:
                 if isinstance(source, dict):
                     for key, value in source.items():
-                        if isinstance(value, (int, float, np.number)):
+                        if isinstance(value, (int, float, np.generic)):
                             if key not in metrics_sum:
                                 metrics_sum[key] = 0
                                 metrics_count[key] = 0
@@ -841,8 +841,8 @@ class ComparisonExperimentRunner:
                     value = perf_metric if perf_metric is not None else 0.0
             elif metric_name in result:
                 value = result[metric_name]
-            
-            if isinstance(value, (int, float, np.number)):
+
+            if isinstance(value, (int, float, np.generic)):
                 values.append(float(value))
         
         return np.std(values) if values else 0.0

@@ -60,7 +60,7 @@ export PYTHONPATH=/home/swim/projects/digital_pheromone_mas:$PYTHONPATH
 cd cpp_backend && ./build.sh && cd ..
 
 # 빠른 실험 실행
-python src/experiments/run_experiment.py --config config/quick_experiment_config.yaml
+python -m src.experiments.run_experiment --config config/quick_experiment_config.yaml
 
 구성: config/quick_experiment_config.yaml을 사용합니다.
 - 맵 크기: 25x25
@@ -74,7 +74,7 @@ python src/experiments/run_experiment.py --config config/quick_experiment_config
 종합적인 연구 결과 확인:
 
 # 전체 실험 실행
-python src/experiments/run_experiment.py --config config/config.yaml
+python -m src.experiments.run_experiment --config config/config.yaml
 
 구성: config/config.yaml 사용:
 - 맵 크기: 50x50
@@ -88,7 +88,7 @@ python src/experiments/run_experiment.py --config config/config.yaml
 4D 페로몬 방법을 기준선과 비교하려면:
 
 # 비교 실험 실행(각각 10회 실행)
-python src/experiments/run_comparison.py --config config/config.yaml
+python -m src.experiments.run_comparison --config config/config.yaml
 
 다음이 실행됩니다.
 - 제안된 방법: 4D 디지털 페로몬 + 분산 주의
@@ -103,7 +103,7 @@ python src/experiments/run_comparison.py --config config/config.yaml
 
 각 페로몬 차원의 기여도를 분석하려면 다음을 실행합니다.
 
-python src/experiments/dimension_ablation_study.py --config config/config.yaml
+python -m src.experiments.dimension_ablation_study --config config/config.yaml
 
 C++ 백엔드 가속 활성화
 

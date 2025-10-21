@@ -208,13 +208,13 @@ class ExperimentVisualizer:
                     # 중첩된 딕셔너리도 처리 (예: mean, std 등의 통계값)
                     if isinstance(sub_value, dict):
                         for stat_name, stat_value in sub_value.items():
-                            if isinstance(stat_value, (int, float, np.number)):
+                            if isinstance(stat_value, (int, float, np.generic)):
                                 data_to_plot.append({
                                     'step': step,
                                     'value': stat_value,
                                     'sub_metric': f"{sub_metric}_{stat_name}"
                                 })
-                    elif isinstance(sub_value, (int, float, np.number)):
+                    elif isinstance(sub_value, (int, float, np.generic)):
                         data_to_plot.append({
                             'step': step,
                             'value': sub_value,
@@ -224,7 +224,7 @@ class ExperimentVisualizer:
                         # 리스트나 배열인 경우 평균값 사용
                         try:
                             mean_val = np.mean(sub_value)
-                            if isinstance(mean_val, (int, float, np.number)):
+                            if isinstance(mean_val, (int, float, np.generic)):
                                 data_to_plot.append({
                                     'step': step,
                                     'value': mean_val,
@@ -232,7 +232,7 @@ class ExperimentVisualizer:
                                 })
                         except (TypeError, ValueError):
                             pass
-            elif isinstance(value, (int, float, np.number)):
+            elif isinstance(value, (int, float, np.generic)):
                 data_to_plot.append({
                     'step': step,
                     'value': value,
@@ -241,7 +241,7 @@ class ExperimentVisualizer:
                 # 리스트나 배열인 경우
                 try:
                     mean_val = np.mean(value)
-                    if isinstance(mean_val, (int, float, np.number)):
+                    if isinstance(mean_val, (int, float, np.generic)):
                         data_to_plot.append({
                             'step': step,
                             'value': mean_val,
