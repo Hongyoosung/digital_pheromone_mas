@@ -72,14 +72,14 @@ class PheromoneNetworkTrainer:
         # 학습률 스케줄러 (옵티마이저가 있는 경우에만)
         if self.attention_optimizer:
             self.attention_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-                self.attention_optimizer, mode='min', factor=0.7, patience=15, verbose=True  # 더 빠른 학습률 감소
+                self.attention_optimizer, mode='min', factor=0.7, patience=15  # 더 빠른 학습률 감소
             )
         else:
             self.attention_scheduler = None
             
         if self.diffusion_optimizer:
             self.diffusion_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-                self.diffusion_optimizer, mode='min', factor=0.7, patience=20, verbose=True  # 더 빠른 학습률 감소
+                self.diffusion_optimizer, mode='min', factor=0.7, patience=20  # 더 빠른 학습률 감소
             )
         else:
             self.diffusion_scheduler = None

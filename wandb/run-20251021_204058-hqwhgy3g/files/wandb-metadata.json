@@ -1,0 +1,55 @@
+{
+    "os": "Windows-10-10.0.26100-SP0",
+    "python": "3.11.13",
+    "heartbeatAt": "2025-10-21T11:40:59.178191",
+    "startedAt": "2025-10-21T11:40:58.099408",
+    "docker": null,
+    "cuda": null,
+    "args": [
+        "--config",
+        "config/config.yaml"
+    ],
+    "state": "running",
+    "program": "-m src.experiments.run_comparison",
+    "codePathLocal": null,
+    "git": {
+        "remote": "https://github.com/Hongyoosung/digital_pheromone_mas.git",
+        "commit": "19a50b37fd4bedc4b72a94d8ade1543077a1bb84"
+    },
+    "email": "yoosung5508@gmail.com",
+    "root": "C:/Users/Foryoucom/Documents/GitHub/4d/digital_pheromone_mas",
+    "host": "DESKTOP-ROGPH03",
+    "username": "Foryoucom",
+    "executable": "C:\\ProgramData\\anaconda3\\envs\\fourd_pheromone\\python.exe",
+    "cpu_count": 8,
+    "cpu_count_logical": 16,
+    "cpu_freq": {
+        "current": 2496.0,
+        "min": 0.0,
+        "max": 2496.0
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 2496.0,
+            "min": 0.0,
+            "max": 2496.0
+        }
+    ],
+    "disk": {
+        "/": {
+            "total": 464.98339462280273,
+            "used": 402.3418083190918
+        }
+    },
+    "gpu": "NVIDIA GeForce GTX 1050 Ti",
+    "gpu_count": 1,
+    "gpu_devices": [
+        {
+            "name": "NVIDIA GeForce GTX 1050 Ti",
+            "memory_total": 4294967296
+        }
+    ],
+    "memory": {
+        "total": 63.87234878540039
+    }
+}
